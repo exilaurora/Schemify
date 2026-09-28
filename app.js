@@ -786,9 +786,28 @@
   svg.addEventListener('pointerup', ev => endDrag(ev, false));
   svg.addEventListener('pointercancel', ev => endDrag(ev, true));
   svg.addEventListener('pointerleave', () => { pointerInside = false; if (!drag && st.hovered) { st.hovered = null; if (!sel.size) R.refresh(); } });
+  /* Сенсорный экран: палец по фону двигает схему, два пальца — масштаб.
+     Рамка выделения — двойное касание: коснуться, отпустить и сразу коснуться снова и тянуть. */
+  let lastTap = null, lastPointerType = 'mouse';
+  /* регистрируется раньше attachNavigation, чтобы видеть и касания, которые она перехватывает */
+  addEventListener('pointerdown', e => { lastPointerType = e.pointerType; }, true);
   R.attachNavigation({
     onStart: commitInline,
-    onGesture: () => { if (drag) endDrag({ clientX: 0, clientY: 0 }, true); st.hovered = null; }
+    onGesture: () => { if (drag) endDrag({ clientX: 0, clientY: 0 }, true); st.hovered = null; },
+    shouldPan: ev => {
+      const t = ev.target;
+      if (R.nodeIdOf(t)) return false;                                   /* карточка — перетаскивание */
+      if (mode !== 'edit') return true;
+      if (t.classList && t.classList.contains('gtitle')) return false;    /* заголовок группы — двигать группу */
+      const dbl = lastTap && performance.now() - lastTap.t < ERD.NAV.DOUBLE_TAP_MS &&
+        Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < ERD.NAV.DOUBLE_TAP_DIST;
+      lastTap = null;
+      return !dbl;                                                          /* второе касание — рамка */
+    },
+    onTap: ev => {
+      lastTap = { t: performance.now(), x: ev.clientX, y: ev.clientY };
+      if (sel.size || groupsPanel) { groupsPanel = false; setSelection([]); }
+    }
   });
 
   function finishLink(d, ev) {
@@ -821,6 +840,8 @@
       return;
     }
     if (tgt.classList.contains('gtitle')) { renameGroupInline(tgt.getAttribute('data-gid')); return; }
+    /* на сенсорном экране двойное касание фона — жест рамки выделения, а не новая таблица */
+    if (lastPointerType === 'touch') return;
     const p = R.toWorld(ev.clientX, ev.clientY);
     addTable({ x: p.x, y: p.y }, tgt.classList.contains('gbox') ? tgt.getAttribute('data-gid') : null);
   });

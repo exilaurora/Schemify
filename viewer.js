@@ -21,7 +21,8 @@ function ERDCoreFactory() {
   /* скорость навигации: колесо мыши, щипок на тачпаде (в 10 раз быстрее мыши) и на экране */
   const NAV = {
     MOUSE_WHEEL: 0.0012, PINCH_WHEEL: 0.012, PINCH_WHEEL_CLAMP: 25, PINCH_TOUCH_POW: 1.6,
-    TRACKPAD_MAX_DELTA: 50, WHEEL_SERIES_MS: 220
+    TRACKPAD_MAX_DELTA: 50, WHEEL_SERIES_MS: 220,
+    TAP_SLOP: 8, DOUBLE_TAP_MS: 350, DOUBLE_TAP_DIST: 40
   };
   const MONO = 'ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace';
   const MONO2 = 'ui-monospace,Menlo,Consolas,monospace';
@@ -163,7 +164,9 @@ function ERDCoreFactory() {
     helpKeys: 'Горячие клавиши',
     helpAi: 'Нейросеть: импорт и экспорт схемы БД',
     controls: [
-      ['Двигать схему', 'тянуть средней кнопкой мыши · два пальца по тачпаду · два пальца на экране · Shift+колесо — по горизонтали'],
+      ['Двигать схему', 'тянуть средней кнопкой мыши · два пальца по тачпаду · Shift+колесо — по горизонтали · на телефоне и планшете — один палец по фону'],
+      ['Масштаб на экране', 'щипок двумя пальцами'],
+      ['Выделение на экране', 'двойное касание: коснуться фона, отпустить и сразу коснуться снова и тянуть — рамка выделения; касание таблицы — выбрать, тянуть таблицу — переместить'],
       ['Масштаб', 'колесо мыши · щипок на тачпаде или экране · Ctrl+колесо'],
       ['Выделить', 'клик по таблице · тянуть левой кнопкой по фону — рамка · Shift/Ctrl+клик или Shift+рамка — добавить к выделению. В режиме «Просмотр» выделения нет: клик по таблице только показывает её детали'],
       ['Переместить', 'тянуть карточку (выделенные двигаются вместе) · тянуть заголовок группы — всю группу'],
@@ -918,59 +921,77 @@ button:hover{border-color:var(--muted)}
         if (t.closest && t.closest('dialog')) { if (ev.ctrlKey) ev.preventDefault(); return; }
         wheel(ev);
       }, { passive: false });
-      /* Safari (macOS): щипок на тачпаде приходит как gesturestart/change/end */
+      /* Safari (macOS): щипок на тачпаде приходит как gesturestart/change/end.
+         На iOS эти события тоже приходят при щипке пальцами — там масштаб ведут pointer-события ниже. */
+      const touches = new Map();
       let g0 = 1;
-      addEventListener('gesturestart', ev => { ev.preventDefault(); if (o.onStart) o.onStart(); this._gestureScale = true; g0 = this.d.view.k; });
+      addEventListener('gesturestart', ev => {
+        ev.preventDefault();
+        if (touches.size || !isFinite(ev.clientX)) return;
+        if (o.onStart) o.onStart(); this._gestureScale = true; g0 = this.d.view.k;
+      });
       addEventListener('gesturechange', ev => {
         ev.preventDefault();
+        if (!this._gestureScale || touches.size || !isFinite(ev.clientX)) return;
         this.zoomAt(ev.clientX, ev.clientY, g0 * Math.pow(ev.scale, NAV.PINCH_TOUCH_POW));
       });
       addEventListener('gestureend', ev => { ev.preventDefault(); this._gestureScale = false; });
-      /* сенсорный экран: два пальца — панорама + масштаб (перехват в фазе capture) */
-      const touches = new Map(); let g = null;
+
+      /* Сенсорный экран. Перехват на window в фазе capture — раньше обработчиков приложения
+         в любом браузере. Один палец по фону — панорама (o.shouldPan решает, что считать фоном),
+         два пальца — панорама + масштаб. Лёгкое касание без сдвига — o.onTap. */
+      const inSvg = t => t === svg || (t && t.nodeType === 1 && svg.contains(t));
       const mid = () => { const [a, b] = [...touches.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1 }; };
-      svg.addEventListener('pointerdown', ev => {
-        if (ev.pointerType !== 'touch') return;
+      const anchor = p => { const r = svg.getBoundingClientRect(), v = this.d.view; return { wx: (p.x - r.left - v.x) / v.k, wy: (p.y - r.top - v.y) / v.k }; };
+      let g = null;   /* текущий жест: {mode:'pan'|'pinch', ...} */
+      const startPan = (p, moved) => { g = Object.assign({ mode: 'pan', p0: { x: p.x, y: p.y }, moved: !!moved }, anchor(p)); };
+      const startPinch = () => { const m = mid(); g = Object.assign({ mode: 'pinch', d0: m.d, k0: this.d.view.k }, anchor(m)); };
+      const stop = ev => { ev.stopImmediatePropagation(); if (ev.cancelable) ev.preventDefault(); };
+      addEventListener('pointerdown', ev => {
+        if (ev.pointerType !== 'touch' || !inSvg(ev.target)) return;
         touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
-        if (touches.size === 2 && !g) {
+        if (touches.size === 2) {
           if (o.onStart) o.onStart();
-          if (o.onGesture) o.onGesture();
-          const m = mid(), r = svg.getBoundingClientRect(), v = this.d.view;
-          g = { m0: m, k0: v.k, wx: (m.x - r.left - v.x) / v.k, wy: (m.y - r.top - v.y) / v.k };
-          svg.classList.add('panning');
-        }
-        if (g) { ev.stopImmediatePropagation(); ev.preventDefault(); }
+          if (o.onGesture) o.onGesture();       /* приложение отменяет своё перетаскивание */
+          startPinch(); svg.classList.add('panning'); stop(ev);
+        } else if (touches.size === 1 && (!o.shouldPan || o.shouldPan(ev))) {
+          if (o.onStart) o.onStart();
+          startPan(touches.get(ev.pointerId));
+          try { svg.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
+          stop(ev);
+        } else if (g) stop(ev);
       }, true);
-      svg.addEventListener('pointermove', ev => {
+      addEventListener('pointermove', ev => {
         if (ev.pointerType !== 'touch' || !touches.has(ev.pointerId)) return;
-        touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+        const p = { x: ev.clientX, y: ev.clientY };
+        touches.set(ev.pointerId, p);
         if (!g) return;
-        ev.stopImmediatePropagation();
+        stop(ev);
         const r = svg.getBoundingClientRect(), v = this.d.view;
-        if (touches.size < 2) {
-          /* один палец после щипка просто двигает схему */
-          if (g.single) { v.x = ev.clientX - r.left - g.wx * v.k; v.y = ev.clientY - r.top - g.wy * v.k; this.applyView(); }
-          return;
-        }
-        const m = mid();
-        const k = Math.min(C.MAX_K, Math.max(C.MIN_K, g.k0 * Math.pow(m.d / g.m0.d, NAV.PINCH_TOUCH_POW)));
-        v.k = k; v.x = m.x - r.left - g.wx * k; v.y = m.y - r.top - g.wy * k;
+        if (g.mode === 'pinch' && touches.size >= 2) {
+          const m = mid();
+          const k = Math.min(C.MAX_K, Math.max(C.MIN_K, g.k0 * Math.pow(m.d / g.d0, NAV.PINCH_TOUCH_POW)));
+          v.k = k; v.x = m.x - r.left - g.wx * k; v.y = m.y - r.top - g.wy * k;
+        } else if (g.mode === 'pan') {
+          if (!g.moved && Math.hypot(p.x - g.p0.x, p.y - g.p0.y) > NAV.TAP_SLOP) { g.moved = true; svg.classList.add('panning'); }
+          if (!g.moved) return;
+          v.x = p.x - r.left - g.wx * v.k; v.y = p.y - r.top - g.wy * v.k;
+        } else return;
         this.applyView();
       }, true);
       const up = ev => {
         if (ev.pointerType !== 'touch' || !touches.has(ev.pointerId)) return;
         touches.delete(ev.pointerId);
         if (!g) return;
-        ev.stopImmediatePropagation();
-        if (touches.size === 1) {
-          /* один палец отпущен — продолжаем жест от оставшегося без скачка */
-          const [a] = [...touches.values()], r = svg.getBoundingClientRect(), v = this.d.view;
-          g = { m0: { x: a.x, y: a.y, d: 1 }, k0: v.k, wx: (a.x - r.left - v.x) / v.k, wy: (a.y - r.top - v.y) / v.k, single: true };
+        stop(ev);
+        if (g.mode === 'pinch' && touches.size === 1) startPan([...touches.values()][0], true);  /* без скачка */
+        else if (!touches.size) {
+          if (g.mode === 'pan' && !g.moved && ev.type === 'pointerup' && o.onTap) o.onTap(ev);
+          g = null; svg.classList.remove('panning');
         }
-        if (!touches.size) { g = null; svg.classList.remove('panning'); }
       };
-      svg.addEventListener('pointerup', up, true);
-      svg.addEventListener('pointercancel', up, true);
+      addEventListener('pointerup', up, true);
+      addEventListener('pointercancel', up, true);
     }
     /* границы видимых таблиц с отступом под рамки групп */
     bounds(onlyIds) {
@@ -1138,11 +1159,16 @@ button:hover{border-color:var(--muted)}
     addEventListener('keydown', e => { if (e.key === 'Escape') select(null); });
 
     let drag = null;
-    R.attachNavigation({ scrollable: '#panel, #top', onGesture: () => { drag = null; svg.classList.remove('panning'); } });
+    R.attachNavigation({
+      scrollable: '#panel, #top',
+      shouldPan: ev => !R.nodeIdOf(ev.target),          /* палец по фону двигает схему */
+      onTap: () => select(null),
+      onGesture: () => { drag = null; svg.classList.remove('panning'); }
+    });
     svg.addEventListener('pointerdown', ev => {
       if (ev.button > 1) return;
-      /* двигать схему — средней кнопкой (и одним пальцем на сенсорном экране); левая — карточки и клик */
-      const pan = ev.button === 1 || (ev.pointerType === 'touch' && !R.nodeIdOf(ev.target));
+      /* двигать схему — средней кнопкой (палец по фону обрабатывает attachNavigation); левая — карточки и клик */
+      const pan = ev.button === 1;
       const id = pan ? null : R.nodeIdOf(ev.target), t = id && R.idx.byId.get(id);
       if (ev.button === 1) ev.preventDefault();
       drag = { t, pan, sx: ev.clientX, sy: ev.clientY, ox: t ? t.x : d.view.x, oy: t ? t.y : d.view.y, moved: false };
