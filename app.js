@@ -802,24 +802,92 @@
     const tgt = ev.target, id = R.nodeIdOf(tgt);
     if (id) {
       const t = byId(id), node = R.info(id).g, row = tgt.closest('.row');
-      if (row && !tgt.classList.contains('port')) {
-        const i = +row.getAttribute('data-i');
-        inlineEdit(row.querySelector('.cn'), t.columns[i].name, v => { Model.renameColumn(D, t, i, v); changed(); });
-      } else if (!row) {
-        inlineEdit(node.querySelector('.tname'), t.name, v => { t.name = v; changed({ ids: [t.id] }); });
-      }
+      if (row && !tgt.classList.contains('port')) renameColumnInline(t, +row.getAttribute('data-i'));
+      else if (!row) renameTableInline(t);
       return;
     }
-    if (tgt.classList.contains('gtitle')) {
-      const g = ERD.groupById(D, tgt.getAttribute('data-gid'));
-      if (g) inlineEdit(tgt, g.title, v => { g.title = v; changed({ ids: [] }); });
-      return;
-    }
+    if (tgt.classList.contains('gtitle')) { renameGroupInline(tgt.getAttribute('data-gid')); return; }
     const p = R.toWorld(ev.clientX, ev.clientY);
     addTable({ x: p.x, y: p.y }, tgt.classList.contains('gbox') ? tgt.getAttribute('data-gid') : null);
   });
 
   /* быстрое переименование прямо на карточке */
+  function renameTableInline(t) {
+    inlineEdit(R.info(t.id).g.querySelector('.tname'), t.name, v => { t.name = v; changed({ ids: [t.id] }); });
+  }
+  function renameColumnInline(t, i) {
+    const cn = R.info(t.id).g.querySelector(`.row[data-i="${i}"] .cn`);
+    if (cn) inlineEdit(cn, t.columns[i].name, v => { Model.renameColumn(D, t, i, v); changed(); });
+  }
+  function renameGroupInline(gid) {
+    const g = ERD.groupById(D, gid), ge = R.gEls.get(gid);
+    if (g && ge && ge.tx.style.display !== 'none') inlineEdit(ge.tx, g.title, v => { g.title = v; changed({ ids: [] }); });
+  }
+
+  /* контекстное меню холста: набор пунктов зависит от того, что под курсором */
+  svg.addEventListener('contextmenu', ev => {
+    ev.preventDefault();
+    if (drag) return;
+    commitInline();
+    const tgt = ev.target, id = R.nodeIdOf(tgt), edit = mode === 'edit';
+    const p = R.toWorld(ev.clientX, ev.clientY);
+    const items = [];
+    const add = (label, fn, kbd, danger) => items.push({ label, fn, kbd, danger });
+    const sep = () => items.push('-');
+    if (id) {
+      if (!sel.has(id)) setSelection([id]);
+      const t = byId(id), row = tgt.closest('.row'), n = sel.size;
+      if (edit && row && n === 1) {
+        const i = +row.getAttribute('data-i');
+        add(L.cmRenameColumn, () => renameColumnInline(t, i));
+        add(L.cmInsertColumn, () => addColumn(t, i + 1));
+        add(L.cmDeleteColumn, () => { Model.removeColumn(D, t, i); changed(); }, null, true);
+        sep();
+      }
+      if (edit && n === 1) {
+        add(L.cmRenameTable, () => renameTableInline(t));
+        add(L.cmAddColumn, () => addColumn(t, t.columns.length));
+        sep();
+      }
+      if (edit) add(L.cmDuplicate, duplicateSelected, 'Ctrl+D');
+      add(L.cmCopy, () => copySelection(false), 'Ctrl+C');
+      if (edit) {
+        add(L.cmCut, () => copySelection(true), 'Ctrl+X');
+        sep();
+        add(L.cmNewGroup, () => createGroup([...sel]));
+        if ([...sel].some(x => byId(x).group)) {
+          add(L.cmUngroup, () => { const ids = [...sel]; ids.forEach(x => { byId(x).group = null; }); changed({ ids }); });
+        }
+        sep();
+        add(n > 1 ? fmt(L.cmDeleteN, { n }) : L.cmDelete, deleteSelected, 'Delete', true);
+      }
+    } else if (tgt.classList.contains('gbox') || tgt.classList.contains('gtitle')) {
+      const gid = tgt.getAttribute('data-gid');
+      if (edit) add(L.cmAddTableToGroup, () => addTable(p, gid), 'N');
+      add(L.cmSelectGroup, () => setSelection(D.tables.filter(t => t.group === gid && R.isVisible(t)).map(t => t.id)));
+      if (edit) {
+        add(L.cmRenameGroup, () => renameGroupInline(gid));
+        add(L.cmGroupSettings, () => { sel.clear(); groupsPanel = true; R.refresh(); renderPanel('g-' + gid + '-title'); });
+        sep();
+        add(L.cmDeleteGroup, () => deleteGroup(gid), null, true);
+      }
+    } else {
+      if (edit) {
+        add(L.cmAddTable, () => addTable(p, null), 'N');
+        add(L.cmPaste, () => pasteFromButton(p), 'Ctrl+V');
+        add(L.cmPasteJson, openPasteJson);
+        sep();
+      }
+      add(L.cmSelectAll, selectAll, 'Ctrl+A');
+      add(L.cmFit, fitView, 'F');
+      if (edit) {
+        add(L.cmAutoLayout, doAutoLayout);
+        add(L.cmGroups, () => { sel.clear(); groupsPanel = true; R.refresh(); renderPanel(); });
+      }
+    }
+    if (items.length) popupMenu(items, { x: ev.clientX, y: ev.clientY }, null, L.cmAria);
+  });
+
   let inline = null;
   function inlineEdit(textEl, value, onCommit) {
     commitInline();
@@ -886,7 +954,8 @@
     return true;
   }
   function insertFrag(frag, where, warnings) {
-    const pos = where === 'cursor' && pointerInside && pointerWorld ? pointerWorld : R.viewCenter(margins());
+    const pos = where && typeof where === 'object' ? where
+      : where === 'cursor' && pointerInside && pointerWorld ? pointerWorld : R.viewCenter(margins());
     const res = Model.insertFragment(D, frag, pos, { snap: prefs.snap ? C.GRID : 0 });
     sel.clear(); res.ids.forEach(id => sel.add(id)); groupsPanel = false;
     changed();
@@ -903,11 +972,11 @@
     const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
     if (!pasteText(text, 'cursor')) toast(L.clipEmpty);
   });
-  async function pasteFromButton() {
+  async function pasteFromButton(where) {
     if (!canEdit()) return;
     let text = null;
     try { if (navigator.clipboard && navigator.clipboard.readText) text = await navigator.clipboard.readText(); } catch (e) { /* запрещено браузером */ }
-    if (!pasteText(text, 'center')) openPasteJson();
+    if (!pasteText(text, where || 'center')) openPasteJson();
   }
   async function openPasteJson() {
     if (!canEdit()) return;
@@ -1242,7 +1311,7 @@
   const menu = $('#file-menu'), fileBtn = $('#b-file');
   const ACTIONS = {
     import: pickFile, exportJson, exportHtml, exportSvg, exportPng, exportAll,
-    copy: () => copySelection(false), paste: pasteFromButton, pasteJson: openPasteJson,
+    copy: () => copySelection(false), paste: () => pasteFromButton(), pasteJson: openPasteJson,
     newDiagram, sample: loadSample, minimap: () => setMinimap(!prefs.minimap)
   };
   function renderMenu() {
@@ -1280,24 +1349,26 @@
   function closePopup(focusAnchor) {
     if (!popup) return;
     const p = popup; popup = null;
-    p.m.remove(); p.anchor.setAttribute('aria-expanded', 'false');
+    p.m.remove();
+    if (p.anchor) p.anchor.setAttribute('aria-expanded', 'false');
     lastPopup = { id: p.id, t: performance.now() };
-    if (focusAnchor && p.anchor.isConnected) p.anchor.focus();
+    if (focusAnchor && p.anchor && p.anchor.isConnected) p.anchor.focus();
   }
   function popupMenu(items, pt, anchor, label, id) {
     closePopup(); lastPopup = null;
     const m = el('div', { class: 'menu popup', role: 'menu', 'aria-label': label });
+    items = items.filter((it, i, a) => it !== '-' || (i > 0 && i < a.length - 1 && a[i - 1] !== '-'));
     items.forEach(it => {
       if (it === '-') { m.appendChild(el('hr', { role: 'separator' })); return; }
       m.appendChild(el('button', {
         type: 'button', role: 'menuitem', class: it.danger ? 'danger' : null,
         onclick: () => { closePopup(true); lastPopup = null; it.fn(); }
-      }, el('span', { text: it.label })));
+      }, [el('span', { text: it.label }), it.kbd ? el('kbd', { text: it.kbd }) : null]));
     });
     document.body.appendChild(m);
     m.style.left = Math.max(8, Math.min(pt.x, innerWidth - m.offsetWidth - 8)) + 'px';
     m.style.top = Math.max(8, Math.min(pt.y, innerHeight - m.offsetHeight - 8)) + 'px';
-    anchor.setAttribute('aria-expanded', 'true');
+    if (anchor) anchor.setAttribute('aria-expanded', 'true');
     popup = { m, anchor, id };
     menuKeys(m, closePopup);
     m.querySelector('button').focus();
@@ -1335,10 +1406,6 @@
     if (v === 'ok') importText(ta.value, 'answer.json');
   }
   function renderHelp() {
-    const reading = $('#help-reading');
-    ERD.buildLegend(reading, false);
-    const title = reading.querySelector('b'); if (title) { title.nextSibling.remove(); title.remove(); }
-    reading.appendChild(el('p', { class: 'hint', text: L.helpReadingHint }));
     append($('#help-controls'), el('dl', { class: 'hdl' }, L.controls.map(([a, b]) => [el('dt', { text: a }), el('dd', { text: b })])));
     append($('#help-keys'), [
       el('dl', { class: 'hdl keys' }, L.keys.map(([a, b]) => [el('dt', {}, a.split(/(, | \/ )/).map(k => (/^(, | \/ )$/.test(k) ? k : el('kbd', { text: k })))), el('dd', { text: b })])),
@@ -1399,9 +1466,17 @@
     if (e.key === 'Delete' || e.key === 'Backspace') { if (sel.size) { e.preventDefault(); deleteSelected(); } return; }
     if (e.key === 'Escape') {
       if (drag) { endDrag({ clientX: 0, clientY: 0 }, true); return; }
-      closeMenu(); groupsPanel = false; setSelection([]); return;
+      closeMenu(); closePopup(); groupsPanel = false; setSelection([]); return;
     }
     if (code === 'KeyF' && !e.shiftKey) { e.preventDefault(); fitView(); }
+    if (code === 'KeyN' && !e.shiftKey) {
+      e.preventDefault(); closePopup();
+      if (!pointerInside || !pointerWorld) { addTable(); return; }
+      /* под курсором; внутри рамки группы — сразу в эту группу */
+      const p = pointerWorld; let gid = null;
+      R.groupBounds().forEach((r, g) => { if (p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1) gid = g; });
+      addTable(p, gid);
+    }
   });
 
   /* ======================= КНОПКИ ======================= */
