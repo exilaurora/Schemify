@@ -597,8 +597,11 @@ button:hover{border-color:var(--muted)}
   function groupById(d, gid) { return gid ? d.groups.find(g => g.id === gid) || null : null; }
 
   /* ---------- АВТОРАСКЛАДКА: группы блоками, внутри — masonry ---------- */
+  /* cfg.grid — шаг сетки (по умолчанию C.GRID): все координаты кратны ему; 0 — без сетки */
   function autoLayout(d, cfg) {
     cfg = cfg || {};
+    const grid = cfg.grid === undefined ? C.GRID : cfg.grid;
+    const g = v => (grid ? Math.ceil(v / grid) * grid : v);
     const members = new Map();
     const keys = d.groups.map(g => g.id);
     keys.forEach(k => members.set(k, []));
@@ -616,14 +619,14 @@ button:hover{border-color:var(--muted)}
     /* раскладка одного блока в координатах (0,0); возвращает размеры */
     const block = k => {
       const ts = members.get(k), n = ncolsOf(k);
-      const colW = Math.max(C.W, ...ts.map(tableWidth));
-      const colY = Array(n).fill(C.GHEAD), pos = [];
+      const colW = Math.max(C.W, ...ts.map(tableWidth)), step = g(colW + C.GAP);
+      const colY = Array(n).fill(g(C.GHEAD)), pos = [];
       ts.forEach(t => {
         const ci = colY.indexOf(Math.min(...colY));
-        pos.push([t, C.GPAD + ci * (colW + C.GAP), colY[ci]]);
-        colY[ci] += tableHeight(t) + C.GAP;
+        pos.push([t, g(C.GPAD) + ci * step, colY[ci]]);
+        colY[ci] += g(tableHeight(t) + C.GAP);
       });
-      return { pos, w: n * (colW + C.GAP) - C.GAP + C.GPAD * 2, h: Math.max(...colY) };
+      return { pos, w: g(C.GPAD) + (n - 1) * step + colW + C.GPAD, h: Math.max(...colY) };
     };
     const blocks = new Map(live.map(k => [k, block(k)]));
     let rows = cfg.rows ? cfg.rows.map(r => r.filter(k => blocks.has(k))).filter(r => r.length) : null;
@@ -648,9 +651,9 @@ button:hover{border-color:var(--muted)}
       r.forEach(k => {
         const b = blocks.get(k);
         b.pos.forEach(([t, px, py]) => { t.x = x + px; t.y = y + py; });
-        x += b.w + C.GROUP_GAP_X; bottom = Math.max(bottom, y + b.h);
+        x += g(b.w + C.GROUP_GAP_X); bottom = Math.max(bottom, y + b.h);
       });
-      y = bottom + C.GROUP_GAP_Y;
+      y = g(bottom + C.GROUP_GAP_Y);
     });
   }
 

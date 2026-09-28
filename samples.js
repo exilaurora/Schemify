@@ -122,7 +122,8 @@ var Samples = (function () {
     ], T, {
       /* раскладка эталона */
       rows: [['infra', 'devices', 'ref'], ['traffic', 'ssh'], ['rules', 'incidents', 'users']],
-      ncols: { infra: 2, devices: 2, ref: 2, traffic: 3, ssh: 2, rules: 2, incidents: 2, users: 1 }
+      ncols: { infra: 2, devices: 2, ref: 2, traffic: 3, ssh: 2, rules: 2, incidents: 2, users: 1 },
+      grid: 0 /* без сетки — координаты один в один как в эталоне */
     });
   }
 

@@ -107,8 +107,10 @@
   }
 
   /* ======================= СОСТОЯНИЕ ======================= */
-  const prefs = Object.assign({ snap: false, minimap: true, sidebar: innerWidth > 1100, mode: 'edit' }, Store.getPrefs());
+  const prefs = Object.assign({ snap: true, minimap: true, sidebar: innerWidth > 1100, mode: 'edit' }, Store.getPrefs());
   const savePrefs = () => Store.setPrefs(prefs);
+  /* v2: привязка к сетке по умолчанию включена — включаем и тем, у кого сохранилось старое «выкл» */
+  if (!(prefs.v >= 2)) { prefs.snap = true; prefs.v = 2; savePrefs(); }
   let D = null;                   /* текущая диаграмма (объект модели) */
   let mode = prefs.mode === 'view' ? 'view' : 'edit';
   let groupsPanel = false;        /* открыт ли менеджер групп */
@@ -329,7 +331,7 @@
   }
   function doAutoLayout() {
     if (!canEdit() || !D.tables.length) return;
-    ERD.autoLayout(D);
+    ERD.autoLayout(D, { grid: prefs.snap ? C.GRID : 0 });
     changed({ panel: false });
     fitView();
   }
