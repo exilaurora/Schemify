@@ -99,6 +99,10 @@ body.sb-open #sidebar{transform:none;visibility:visible}
 .menu button.danger{color:var(--danger)}
 .sb-foot{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px;border-top:1px solid var(--card-line)}
 
+/* элементы интерфейса без выделения текста при двойном/долгом касании */
+.brand,.sb-head,.dopen,.sb-help summary,.menu,#toasts,#minimap,#mm-show,#empty,#drop{
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+
 /* ---------- холст: элементы редактора ---------- */
 #svg:focus{outline:none}
 body.mode-view .node{cursor:pointer}

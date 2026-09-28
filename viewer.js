@@ -405,6 +405,10 @@ JSON схемы:
   color-scheme:dark;
 }
 *{box-sizing:border-box}
+html{-webkit-tap-highlight-color:transparent}
+/* без выделения текста и системного меню при двойном/долгом касании (телефоны) */
+#svg,#svg *,#top,#legend,button,.chip{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+#top input,#top textarea{-webkit-user-select:text;user-select:text}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
 #top{position:fixed;left:0;right:0;top:0;z-index:5;display:flex;gap:10px;align-items:center;flex-wrap:wrap;
@@ -944,6 +948,12 @@ button:hover{border-color:var(--muted)}
          • два пальца: o.twoFinger() === 'select' — рамка выделения между пальцами (o.onRect*),
            иначе — щипок (масштаб + панорама). */
       const inSvg = t => t === svg || (t && t.nodeType === 1 && svg.contains(t));
+      svg.addEventListener('selectstart', ev => ev.preventDefault());
+      addEventListener('pointerdown', ev => {
+        if (ev.pointerType !== 'touch' || !inSvg(ev.target)) return;
+        const s = getSelection && getSelection();
+        if (s && s.rangeCount && !s.isCollapsed) s.removeAllRanges();
+      }, true);
       const mid = () => { const [a, b] = [...touches.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1 }; };
       const anchor = p => { const r = svg.getBoundingClientRect(), v = this.d.view; return { wx: (p.x - r.left - v.x) / v.k, wy: (p.y - r.top - v.y) / v.k }; };
       let g = null, lastTap = null;   /* g — текущий жест: pan | zoom1 | pinch | rect | idle */
