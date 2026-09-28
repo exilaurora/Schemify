@@ -1090,7 +1090,7 @@
     flushSave();
     const diagrams = Store.list().map(x => Store.load(x.id)).filter(Boolean).map(Model.toJSON);
     const bundle = { format: Model.BUNDLE, version: Model.VERSION, exportedAt: Model.now(), diagrams };
-    download('erd-diagrams-' + dateStamp() + '.json', JSON.stringify(bundle, null, 2), 'application/json');
+    download('schemify-diagrams-' + dateStamp() + '.json', JSON.stringify(bundle, null, 2), 'application/json');
   }
   const escHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   /* автономный HTML: данные — JSON в <script type="application/json">, CSS и код просмотрщика — инлайн */
@@ -1099,7 +1099,7 @@
     const code = ERDCoreFactory.toString().replace(/<\/(script)/gi, '<\\/$1').replace(/<!--/g, '<\\!--');
     return '<!doctype html>\n<html lang="ru">\n<head>\n<meta charset="utf-8">\n' +
       '<meta name="viewport" content="width=device-width, initial-scale=1">\n<link rel="icon" href="data:,">\n' +
-      `<meta name="generator" content="erd-generator">\n<title>${escHtml(d.name)} — ${escHtml(L.schemaSuffix)}</title>\n` +
+      `<meta name="generator" content="Schemify">\n<title>${escHtml(d.name)} — ${escHtml(L.schemaSuffix)}</title>\n` +
       `<style>${ERD.CSS}</style>\n</head>\n<body>\n` +
       `<script type="application/json" id="erd-data">${data}</script>\n` +
       `<script>\n"use strict";\nvar ERD = (${code})();\nERD.runViewer(JSON.parse(document.getElementById("erd-data").textContent));\n</script>\n` +

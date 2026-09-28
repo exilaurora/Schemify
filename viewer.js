@@ -36,7 +36,8 @@ function ERDCoreFactory() {
 
   /* ---------- СЛОВАРЬ СТРОК (весь интерфейс) ---------- */
   const STR = {
-    appTitle: 'Редактор ER-диаграмм',
+    appTitle: 'Schemify',
+    appTagline: 'редактор ER-диаграмм',
     schemaSuffix: 'схема БД',
     viewerSubtitle: 'схема БД',
     search: 'Поиск',
@@ -200,7 +201,7 @@ function ERDCoreFactory() {
     aiImportTitle: 'Импорт ответа нейросети',
     aiImportHelp: 'Вставьте JSON, который вернула нейросеть (обёртку ```json можно не убирать).',
     aiImportBtn: 'Импортировать',
-    promptToJson: `Ты — конвертер схем баз данных. Преобразуй схему БД, приложенную в конце (SQL DDL, модели SQLAlchemy / Django / Prisma или текстовое описание; может быть несколько файлов), в JSON для импорта в «Редактор ER-диаграмм».
+    promptToJson: `Ты — конвертер схем баз данных. Преобразуй схему БД, приложенную в конце (SQL DDL, модели SQLAlchemy / Django / Prisma или текстовое описание; может быть несколько файлов), в JSON для импорта в Schemify (редактор ER-диаграмм).
 
 Верни ТОЛЬКО JSON одним блоком, без пояснений.
 
@@ -242,7 +243,7 @@ function ERDCoreFactory() {
 
 Схема БД:
 <вставьте сюда содержимое .sql или .py-файлов>`,
-    promptFromJson: `Ты — опытный разработчик баз данных. Ниже — JSON-описание схемы БД из «Редактора ER-диаграмм» (формат erd-generator). Сгенерируй по нему: <ВЫБЕРИ: PostgreSQL DDL (.sql) | модели SQLAlchemy 2.0 (.py)>.
+    promptFromJson: `Ты — опытный разработчик баз данных. Ниже — JSON-описание схемы БД из Schemify (редактор ER-диаграмм) (формат erd-generator). Сгенерируй по нему: <ВЫБЕРИ: PostgreSQL DDL (.sql) | модели SQLAlchemy 2.0 (.py)>.
 
 Как читать JSON:
 - tables[] — таблицы: name — имя, description — комментарий к таблице, group — id логического раздела из groups[].
