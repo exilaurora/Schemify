@@ -22,7 +22,10 @@ function ERDCoreFactory() {
   const NAV = {
     MOUSE_WHEEL: 0.0012, PINCH_WHEEL: 0.012, PINCH_WHEEL_CLAMP: 25, PINCH_TOUCH_POW: 1.6,
     TRACKPAD_MAX_DELTA: 50, WHEEL_SERIES_MS: 220,
-    TAP_SLOP: 8, DOUBLE_TAP_MS: 350, DOUBLE_TAP_DIST: 40, DOUBLE_TAP_ZOOM: 1.8, ONE_FINGER_ZOOM: 0.008
+    TAP_SLOP: 8, DOUBLE_TAP_MS: 350, DOUBLE_TAP_DIST: 40, DOUBLE_TAP_ZOOM: 1.8, ONE_FINGER_ZOOM: 0.008,
+    /* инерция панорамы пальцем: затухание ~как в iOS, скорость в px/мс */
+    INERTIA_TAU: 400, INERTIA_MIN_SPEED: 0.12, INERTIA_MAX_SPEED: 4, INERTIA_SAMPLE_MS: 100, INERTIA_STALE_MS: 60,
+    ZOOM_ANIM_MS: 220
   };
   const MONO = 'ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace';
   const MONO2 = 'ui-monospace,Menlo,Consolas,monospace';
@@ -887,10 +890,44 @@ button:hover{border-color:var(--muted)}
       this.applyView();
     }
     pan(dx, dy) { const v = this.d.view; v.x += dx; v.y += dy; this.applyView(); }
+    /* ---- плавность: инерция и анимированный масштаб (мобильные жесты) ---- */
+    stopInertia() { if (this._anim) { cancelAnimationFrame(this._anim.raf); this._anim = null; } }
+    /* vx, vy — скорость в px/мс; затухает экспоненциально */
+    startInertia(vx, vy) {
+      this.stopInertia();
+      let sp = Math.hypot(vx, vy);
+      if (sp < NAV.INERTIA_MIN_SPEED) return;
+      if (sp > NAV.INERTIA_MAX_SPEED) { vx *= NAV.INERTIA_MAX_SPEED / sp; vy *= NAV.INERTIA_MAX_SPEED / sp; }
+      const a = this._anim = { vx, vy, t: performance.now() };
+      const step = now => {
+        if (this._anim !== a) return;
+        const dt = Math.min(48, Math.max(0, now - a.t)); a.t = now;
+        const v = this.d.view; v.x += a.vx * dt; v.y += a.vy * dt; this.applyView();
+        const f = Math.exp(-dt / NAV.INERTIA_TAU); a.vx *= f; a.vy *= f;
+        if (Math.hypot(a.vx, a.vy) < 0.02) { this._anim = null; return; }
+        a.raf = requestAnimationFrame(step);
+      };
+      a.raf = requestAnimationFrame(step);
+    }
+    /* плавный масштаб к k2 вокруг точки экрана (ease-out) */
+    animateZoom(cx, cy, k2, ms) {
+      this.stopInertia();
+      k2 = Math.min(C.MAX_K, Math.max(C.MIN_K, k2));
+      const k0 = this.d.view.k, t0 = performance.now(), dur = ms || NAV.ZOOM_ANIM_MS;
+      const a = this._anim = {};
+      const step = now => {
+        if (this._anim !== a) return;
+        const p = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+        this.zoomAt(cx, cy, k0 * Math.pow(k2 / k0, e));
+        if (p < 1) a.raf = requestAnimationFrame(step); else this._anim = null;
+      };
+      a.raf = requestAnimationFrame(step);
+    }
     /* Колесо: мышь — зум; тачпад двумя пальцами — панорама; щипок (ctrl+wheel) — быстрый зум.
        Тип жеста запоминается на время серии событий, чтобы инерция тачпада не переключала режим. */
     onWheel(ev) {
       ev.preventDefault();
+      this.stopInertia();
       const line = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? innerHeight : 1;
       const dx = ev.deltaX * line, dy = ev.deltaY * line;
       if (ev.ctrlKey || ev.metaKey) {
@@ -955,6 +992,8 @@ button:hover{border-color:var(--muted)}
            иначе — щипок (масштаб + панорама). */
       const inSvg = t => t === svg || (t && t.nodeType === 1 && svg.contains(t));
       svg.addEventListener('selectstart', ev => ev.preventDefault());
+      /* любое нажатие на холст (палец, мышь, перо) останавливает инерцию */
+      addEventListener('pointerdown', ev => { if (inSvg(ev.target)) this.stopInertia(); }, true);
       addEventListener('pointerdown', ev => {
         if (ev.pointerType !== 'touch' || !inSvg(ev.target)) return;
         const s = getSelection && getSelection();
@@ -963,7 +1002,17 @@ button:hover{border-color:var(--muted)}
       const mid = () => { const [a, b] = [...touches.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1 }; };
       const anchor = p => { const r = svg.getBoundingClientRect(), v = this.d.view; return { wx: (p.x - r.left - v.x) / v.k, wy: (p.y - r.top - v.y) / v.k }; };
       let g = null, lastTap = null;   /* g — текущий жест: pan | zoom1 | pinch | rect | idle */
-      const startPan = (p, moved) => { g = Object.assign({ mode: 'pan', p0: { x: p.x, y: p.y }, moved: !!moved }, anchor(p)); };
+      const startPan = (p, moved) => {
+        g = Object.assign({ mode: 'pan', p0: { x: p.x, y: p.y }, moved: !!moved, samples: [{ x: p.x, y: p.y, t: performance.now() }] }, anchor(p));
+      };
+      /* скорость пальца по последним ~100 мс; если палец замер перед отпусканием — без инерции */
+      const velocity = samples => {
+        const now = performance.now(), last = samples[samples.length - 1];
+        if (!last || now - last.t > NAV.INERTIA_STALE_MS) return null;
+        const first = samples.find(s => last.t - s.t <= NAV.INERTIA_SAMPLE_MS) || last;
+        const dt = last.t - first.t;
+        return dt > 0 ? { vx: (last.x - first.x) / dt, vy: (last.y - first.y) / dt } : null;
+      };
       const startPinch = () => { const m = mid(); g = Object.assign({ mode: 'pinch', d0: m.d, k0: this.d.view.k }, anchor(m)); };
       const stop = ev => { ev.stopImmediatePropagation(); if (ev.cancelable) ev.preventDefault(); };
       const isDoubleTap = p => lastTap && performance.now() - lastTap.t < NAV.DOUBLE_TAP_MS &&
@@ -1015,6 +1064,9 @@ button:hover{border-color:var(--muted)}
           v.k = k; v.x = sx - g.wx * k; v.y = sy - g.wy * k;
         } else if (g.mode === 'pan') {
           if (!g.moved && Math.hypot(p.x - g.p0.x, p.y - g.p0.y) > NAV.TAP_SLOP) { g.moved = true; svg.classList.add('panning'); }
+          const now = performance.now();
+          g.samples.push({ x: p.x, y: p.y, t: now });
+          while (g.samples.length > 2 && now - g.samples[0].t > NAV.INERTIA_SAMPLE_MS * 2) g.samples.shift();
           if (!g.moved) return;
           v.x = p.x - r.left - g.wx * v.k; v.y = p.y - r.top - g.wy * v.k;
         } else return;
@@ -1031,11 +1083,14 @@ button:hover{border-color:var(--muted)}
         } else if (g.mode === 'pinch' && touches.size === 1) startPan([...touches.values()][0], true);  /* без скачка */
         else if (!touches.size) {
           const tapped = !g.moved && ev.type === 'pointerup';
-          if (g.mode === 'pan' && tapped) {
+          if (g.mode === 'pan' && g.moved && ev.type === 'pointerup') {
+            const vel = velocity(g.samples);
+            if (vel) this.startInertia(vel.vx, vel.vy);        /* схема «докатывается» после броска */
+          } else if (g.mode === 'pan' && tapped) {
             lastTap = { t: performance.now(), x: ev.clientX, y: ev.clientY };
             if (o.onTap) o.onTap(ev);
           } else if (g.mode === 'zoom1' && tapped) {
-            this.zoomAt(ev.clientX, ev.clientY, this.d.view.k * NAV.DOUBLE_TAP_ZOOM);  /* двойное касание — приблизить */
+            this.animateZoom(ev.clientX, ev.clientY, this.d.view.k * NAV.DOUBLE_TAP_ZOOM);  /* двойное касание — плавно приблизить */
           }
           g = null;
         }
@@ -1057,6 +1112,7 @@ button:hover{border-color:var(--muted)}
     }
     fit(m) {
       m = Object.assign({ top: 0, left: 0, right: 0, bottom: 0 }, m);
+      this.stopInertia();
       const b = this.bounds(); if (!b) return;
       const vw = Math.max(100, innerWidth - m.left - m.right), vh = Math.max(100, innerHeight - m.top - m.bottom);
       const k = Math.max(C.MIN_K, Math.min(vw / (b.x1 - b.x0), vh / (b.y1 - b.y0), 1.2));
@@ -1066,6 +1122,7 @@ button:hover{border-color:var(--muted)}
     }
     centerAt(wx, wy, m, minK) {
       m = Object.assign({ top: 0, left: 0, right: 0, bottom: 0 }, m);
+      this.stopInertia();
       const v = this.d.view; if (minK) v.k = Math.max(v.k, minK);
       v.x = m.left + (innerWidth - m.left - m.right) / 2 - wx * v.k;
       v.y = m.top + (innerHeight - m.top - m.bottom) / 2 - wy * v.k;

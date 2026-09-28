@@ -1369,7 +1369,7 @@
     v.x = innerWidth / 2 - wx * v.k; v.y = th + (innerHeight - th) / 2 - wy * v.k;
     R.applyView();
   };
-  mmc.addEventListener('pointerdown', e => { mmDrag = true; mmc.setPointerCapture(e.pointerId); mmGo(e); });
+  mmc.addEventListener('pointerdown', e => { R.stopInertia(); mmDrag = true; mmc.setPointerCapture(e.pointerId); mmGo(e); });
   mmc.addEventListener('pointermove', e => { if (mmDrag) mmGo(e); });
   mmc.addEventListener('pointerup', () => { mmDrag = false; });
   mm.querySelector('.mm-close').addEventListener('click', () => setMinimap(false));
