@@ -773,7 +773,10 @@
   svg.addEventListener('pointerup', ev => endDrag(ev, false));
   svg.addEventListener('pointercancel', ev => endDrag(ev, true));
   svg.addEventListener('pointerleave', () => { pointerInside = false; if (!drag && st.hovered) { st.hovered = null; if (!sel.size) R.refresh(); } });
-  svg.addEventListener('wheel', ev => { commitInline(); R.onWheel(ev); }, { passive: false });
+  R.attachNavigation({
+    onStart: commitInline,
+    onGesture: () => { if (drag) endDrag({ clientX: 0, clientY: 0 }, true); st.hovered = null; }
+  });
 
   function finishLink(d, ev) {
     const hit = document.elementFromPoint(ev.clientX, ev.clientY);
@@ -1152,7 +1155,7 @@
   }
   function loadSample() {
     flushSave();
-    const d = Samples.netwatch();
+    const d = Samples.network();
     try { Store.save(d); } catch (e) { if (Store.isQuota(e)) showQuota(); }
     openDiagram(d);
     toast(fmt(L.sampleLoaded, { n: d.tables.length }));

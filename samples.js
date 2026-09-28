@@ -1,6 +1,6 @@
 /* ============================================================================
    samples.js — встроенные примеры: демо-схема первого запуска и схема
-   netwatch из эталона (43 таблицы, 60 связей) с той же раскладкой.
+   мониторинга сети из эталона (43 таблицы, 60 связей) с той же раскладкой.
    Описание в компактной нотации эталона: [имя, тип, флаги, ссылка].
    ========================================================================== */
 var Samples = (function () {
@@ -47,7 +47,7 @@ var Samples = (function () {
     ], { rows: [['users', 'catalog', 'orders']], ncols: { users: 1, catalog: 1, orders: 1 } });
   }
 
-  function netwatch() {
+  function network() {
     const ID = ['id', 'bigint', 'pk'], SID = ['id', 'smallint', 'pk'];
     const T = [];
     const t = (name, group, desc, cols, o) => T.push([name, group, desc, cols, o]);
@@ -63,7 +63,7 @@ var Samples = (function () {
     /* Инфраструктура */
     t('location', 'infra', 'Где стоит роутер (дом, офис).', [['id', 'int', 'pk'], ['name', 'text']]);
     t('router', 'infra', 'Роутер.', [['id', 'int', 'pk'], ['location_id', 'int', '', 'location'], ['name', 'text', 'uq'], ['is_active', 'bool']]);
-    t('router_run', 'infra', 'Запуск netwatch на роутере.', [ID, ['router_id', 'int', '', 'router'], ['version', 'text'], ['started_at', 'tstz']], { uq: 'UNIQUE(router_id, started_at)' });
+    t('router_run', 'infra', 'Запуск агента мониторинга на роутере.', [ID, ['router_id', 'int', '', 'router'], ['version', 'text'], ['started_at', 'tstz']], { uq: 'UNIQUE(router_id, started_at)' });
     t('router_connection', 'infra', 'TCP-сессия роутера с сервером.', [ID, ['run_id', 'bigint', '', 'router_run'], ['remote_ip', 'inet'], ['connected_at', 'tstz'], ['disconnected_at', 'tstz', 'null'], ['reason', 'text', 'null']]);
     t('wireless_network', 'infra', 'Беспроводная сеть (SSID) роутера.', [['id', 'int', 'pk'], ['router_id', 'int', '', 'router'], ['ssid', 'text']], { uq: 'UNIQUE(router_id, ssid)' });
     t('wifi_interface', 'infra', 'Wi-Fi интерфейс роутера (phy0-ap0).', [['id', 'int', 'pk'], ['router_id', 'int', '', 'router'], ['network_id', 'int', '', 'wireless_network'], ['name', 'text']], { uq: 'UNIQUE(router_id, name)' });
@@ -110,7 +110,7 @@ var Samples = (function () {
     t('role', 'users', 'Роль пользователя.', [SID, ['name', 'text', 'uq']]);
     t('user_router_access', 'users', 'Какие роутеры видит пользователь. Связь M:N.', [['user_id', 'int', 'pk', 'app_user'], ['router_id', 'int', 'pk', 'router']]);
 
-    return build('netwatch', [
+    return build('Пример: мониторинг сети', [
       ['ref', 'Справочники', '#6f7f9c', '#8395b6'],
       ['infra', 'Инфраструктура', '#2f7dd1', '#4a97ec'],
       ['devices', 'Устройства', '#1f9d7a', '#35b895'],
@@ -126,5 +126,5 @@ var Samples = (function () {
     });
   }
 
-  return { demo, netwatch };
+  return { demo, network };
 })();

@@ -18,6 +18,11 @@ function ERDCoreFactory() {
     UQ_LINE: 14, FOOT: 6, R: 8, GRID: 24, MIN_K: 0.12, MAX_K: 3,
     GROUP_GAP_X: 50, GROUP_GAP_Y: 30
   };
+  /* скорость навигации: колесо мыши, щипок на тачпаде (в 10 раз быстрее мыши) и на экране */
+  const NAV = {
+    MOUSE_WHEEL: 0.0012, PINCH_WHEEL: 0.012, PINCH_WHEEL_CLAMP: 25, PINCH_TOUCH_POW: 1.6,
+    TRACKPAD_MAX_DELTA: 50, WHEEL_SERIES_MS: 220
+  };
   const MONO = 'ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace';
   const MONO2 = 'ui-monospace,Menlo,Consolas,monospace';
   const FONT = {
@@ -31,7 +36,7 @@ function ERDCoreFactory() {
 
   /* ---------- СЛОВАРЬ СТРОК (весь интерфейс) ---------- */
   const STR = {
-    appTitle: 'ER-редактор',
+    appTitle: 'Редактор ER-диаграмм',
     schemaSuffix: 'схема БД',
     viewerSubtitle: 'схема БД',
     search: 'Поиск',
@@ -54,8 +59,8 @@ function ERDCoreFactory() {
     legendNotNull: 'связь FK (NOT NULL)',
     legendNull: 'FK допускает NULL',
     legendEnds: '● конец у FK-поля   ▏ конец у PK-поля',
-    legendHint: 'Наведи на таблицу — подсветятся связи · клик — детали · тяни карточки · колесо — зум',
-    legendEditHint: 'Двойной клик по фону — новая таблица · тяни ● у строки к таблице — FK · Shift+тяни — рамка выделения',
+    legendHint: 'Наведи на таблицу — подсветятся связи · клик — детали · тяни карточки · колесо или щипок — зум · два пальца — перемещение',
+    legendEditHint: 'Двойной клик по фону — новая таблица · тяни ● у строки к таблице — FK · Shift+тяни — рамка выделения · два пальца — перемещение, щипок — зум',
     canvasAria: 'Холст диаграммы',
 
     /* редактор: верхняя панель */
@@ -92,7 +97,7 @@ function ERDCoreFactory() {
     mCopy: 'Копировать',
     mPaste: 'Вставить',
     mPasteJson: 'Вставить из JSON…',
-    mSample: 'Загрузить пример (netwatch)',
+    mSample: 'Загрузить пример',
     mNewDiagram: 'Новая диаграмма',
 
     /* боковая панель диаграмм */
@@ -150,7 +155,7 @@ function ERDCoreFactory() {
     selectGroupTables: 'Выделить таблицы группы',
     groupN: 'Группа {n}',
     noGroups: 'Групп пока нет. Таблицы без группы рисуются без рамки.',
-    emptyHint: 'Диаграмма пуста. Двойной клик по фону или «+ Таблица» — создать таблицу; «Файл → Загрузить пример» — схема netwatch.',
+    emptyHint: 'Диаграмма пуста. Двойной клик по фону или «+ Таблица» — создать таблицу; «Файл → Загрузить пример» — большая демонстрационная схема.',
 
     /* уведомления */
     undone: 'Отменено',
@@ -715,9 +720,103 @@ button:hover{border-color:var(--muted)}
       v.x = mx - (mx - v.x) * (k2 / v.k); v.y = my - (my - v.y) * (k2 / v.k); v.k = k2;
       this.applyView();
     }
+    pan(dx, dy) { const v = this.d.view; v.x += dx; v.y += dy; this.applyView(); }
+    /* Колесо: мышь — зум; тачпад двумя пальцами — панорама; щипок (ctrl+wheel) — быстрый зум.
+       Тип жеста запоминается на время серии событий, чтобы инерция тачпада не переключала режим. */
     onWheel(ev) {
       ev.preventDefault();
-      this.zoomAt(ev.clientX, ev.clientY, this.d.view.k * Math.exp(-ev.deltaY * (ev.deltaMode === 1 ? 0.036 : 0.0012)));
+      const line = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? innerHeight : 1;
+      const dx = ev.deltaX * line, dy = ev.deltaY * line;
+      if (ev.ctrlKey || ev.metaKey) {
+        if (this._gestureScale) return;           /* Safari шлёт gesture*-события — зум уже там */
+        const pd = Math.max(-NAV.PINCH_WHEEL_CLAMP, Math.min(NAV.PINCH_WHEEL_CLAMP, dy));
+        this.zoomAt(ev.clientX, ev.clientY, this.d.view.k * Math.exp(-pd * NAV.PINCH_WHEEL));
+        return;
+      }
+      const now = performance.now();
+      if (!this._wheelKind || now - this._wheelT > NAV.WHEEL_SERIES_MS) {
+        this._wheelKind = ev.deltaMode !== 0 ? 'zoom'
+          : ev.shiftKey || ev.deltaX !== 0 || Math.abs(ev.deltaY) < NAV.TRACKPAD_MAX_DELTA ? 'pan' : 'zoom';
+      }
+      this._wheelT = now;
+      if (this._wheelKind === 'pan') {
+        if (ev.shiftKey && !dx) this.pan(-dy, 0); else this.pan(-dx, -dy);
+      } else {
+        this.zoomAt(ev.clientX, ev.clientY, this.d.view.k * Math.exp(-ev.deltaY * (ev.deltaMode === 1 ? 30 : line) * NAV.MOUSE_WHEEL));
+      }
+    }
+    /* Навигация двумя пальцами по всему окну: тачпад (колесо/щипок, gesture-события Safari)
+       и сенсорный экран (панорама и щипок двумя пальцами).
+       o.onStart — перед любым жестом; o.onGesture — начало жеста двумя пальцами на сенсорном
+       экране (приложение отменяет своё перетаскивание); o.scrollable — области с собственной
+       прокруткой, где обычный скролл остаётся браузерным. */
+    attachNavigation(o) {
+      o = o || {};
+      const svg = this.svg, scrollable = o.scrollable || '#panel, #sidebar, .menu, dialog, #top';
+      const wheel = ev => { if (o.onStart) o.onStart(); this.onWheel(ev); };
+      svg.addEventListener('wheel', wheel, { passive: false });
+      /* колесо над панелями и оверлеями: щипок всегда масштабирует схему (а не страницу),
+         прокрутка над легендой, мини-картой и т.п. двигает схему */
+      addEventListener('wheel', ev => {
+        const t = ev.target;
+        if (svg.contains(t)) return;
+        if (!(ev.ctrlKey || ev.metaKey) && t.closest && t.closest(scrollable)) return;
+        if (t.closest && t.closest('dialog')) { if (ev.ctrlKey) ev.preventDefault(); return; }
+        wheel(ev);
+      }, { passive: false });
+      /* Safari (macOS): щипок на тачпаде приходит как gesturestart/change/end */
+      let g0 = 1;
+      addEventListener('gesturestart', ev => { ev.preventDefault(); if (o.onStart) o.onStart(); this._gestureScale = true; g0 = this.d.view.k; });
+      addEventListener('gesturechange', ev => {
+        ev.preventDefault();
+        this.zoomAt(ev.clientX, ev.clientY, g0 * Math.pow(ev.scale, NAV.PINCH_TOUCH_POW));
+      });
+      addEventListener('gestureend', ev => { ev.preventDefault(); this._gestureScale = false; });
+      /* сенсорный экран: два пальца — панорама + масштаб (перехват в фазе capture) */
+      const touches = new Map(); let g = null;
+      const mid = () => { const [a, b] = [...touches.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1 }; };
+      svg.addEventListener('pointerdown', ev => {
+        if (ev.pointerType !== 'touch') return;
+        touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+        if (touches.size === 2 && !g) {
+          if (o.onStart) o.onStart();
+          if (o.onGesture) o.onGesture();
+          const m = mid(), r = svg.getBoundingClientRect(), v = this.d.view;
+          g = { m0: m, k0: v.k, wx: (m.x - r.left - v.x) / v.k, wy: (m.y - r.top - v.y) / v.k };
+          svg.classList.add('panning');
+        }
+        if (g) { ev.stopImmediatePropagation(); ev.preventDefault(); }
+      }, true);
+      svg.addEventListener('pointermove', ev => {
+        if (ev.pointerType !== 'touch' || !touches.has(ev.pointerId)) return;
+        touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+        if (!g) return;
+        ev.stopImmediatePropagation();
+        const r = svg.getBoundingClientRect(), v = this.d.view;
+        if (touches.size < 2) {
+          /* один палец после щипка просто двигает схему */
+          if (g.single) { v.x = ev.clientX - r.left - g.wx * v.k; v.y = ev.clientY - r.top - g.wy * v.k; this.applyView(); }
+          return;
+        }
+        const m = mid();
+        const k = Math.min(C.MAX_K, Math.max(C.MIN_K, g.k0 * Math.pow(m.d / g.m0.d, NAV.PINCH_TOUCH_POW)));
+        v.k = k; v.x = m.x - r.left - g.wx * k; v.y = m.y - r.top - g.wy * k;
+        this.applyView();
+      }, true);
+      const up = ev => {
+        if (ev.pointerType !== 'touch' || !touches.has(ev.pointerId)) return;
+        touches.delete(ev.pointerId);
+        if (!g) return;
+        ev.stopImmediatePropagation();
+        if (touches.size === 1) {
+          /* один палец отпущен — продолжаем жест от оставшегося без скачка */
+          const [a] = [...touches.values()], r = svg.getBoundingClientRect(), v = this.d.view;
+          g = { m0: { x: a.x, y: a.y, d: 1 }, k0: v.k, wx: (a.x - r.left - v.x) / v.k, wy: (a.y - r.top - v.y) / v.k, single: true };
+        }
+        if (!touches.size) { g = null; svg.classList.remove('panning'); }
+      };
+      svg.addEventListener('pointerup', up, true);
+      svg.addEventListener('pointercancel', up, true);
     }
     /* границы видимых таблиц с отступом под рамки групп */
     bounds(onlyIds) {
@@ -884,8 +983,8 @@ button:hover{border-color:var(--muted)}
     });
     addEventListener('keydown', e => { if (e.key === 'Escape') select(null); });
 
-    svg.addEventListener('wheel', ev => R.onWheel(ev), { passive: false });
     let drag = null;
+    R.attachNavigation({ scrollable: '#panel, #top', onGesture: () => { drag = null; svg.classList.remove('panning'); } });
     svg.addEventListener('pointerdown', ev => {
       if (ev.button > 1) return;
       const id = R.nodeIdOf(ev.target), t = id && R.idx.byId.get(id);
@@ -912,7 +1011,7 @@ button:hover{border-color:var(--muted)}
   }
 
   return {
-    C, FONT, STR, CSS, NS, HEX, GID, THEME_KEY,
+    C, NAV, FONT, STR, CSS, NS, HEX, GID, THEME_KEY,
     fmt, plural, el, mk, append,
     initialTheme, setTheme, currentTheme, applyGroupColors, injectCSS, colorVar, gkey,
     measure, tableWidth, tableHeight, uniquesOf, buildIndex, resolveRef, groupById, autoLayout,
