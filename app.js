@@ -964,8 +964,15 @@
     if (warnings && warnings.length) toast(warnings[0] + (warnings.length > 1 ? ` (+${warnings.length - 1})` : ''), { type: 'warn', timeout: 6000 });
   }
   let pasteHandled = true;
+  /* На Linux средняя кнопка мыши вставляет «первичное выделение» (primary selection) —
+     браузер шлёт событие paste. Панорама средней кнопкой не должна ничего вставлять. */
+  let middleAt = -Infinity;
+  const markMiddle = e => { if (e.button === 1) middleAt = performance.now(); };
+  ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'auxclick'].forEach(t => document.addEventListener(t, markMiddle, true));
+  svg.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
   document.addEventListener('paste', e => {
     if (isTyping(e.target) || document.querySelector('dialog[open]')) return;
+    if (performance.now() - middleAt < 1000) { e.preventDefault(); return; }
     pasteHandled = true;
     if (mode !== 'edit') return;
     e.preventDefault();
