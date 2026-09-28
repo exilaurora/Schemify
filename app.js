@@ -341,7 +341,6 @@
     svg.classList.toggle('editing', m === 'edit');
     $('#m-view').setAttribute('aria-checked', String(m === 'view'));
     $('#m-edit').setAttribute('aria-checked', String(m === 'edit'));
-    ERD.buildLegend($('#legend'), m === 'edit' ? L.legendEditHint : null);
     if (m === 'view') groupsPanel = false;
     if (D) renderPanel();
   }
@@ -1007,10 +1006,17 @@
   });
 
   /* ======================= ЭКСПОРТ ======================= */
-  function exportJson() {
-    flushSave();
-    download(safeName(D.name) + '.json', JSON.stringify(Model.toJSON(D), null, 2), 'application/json');
+  /* текущая диаграмма берётся из памяти (с принудительным сохранением), остальные — из хранилища */
+  function diagramFor(id) { if (D && id === D.id) { flushSave(); return D; } return Store.load(id); }
+  function exportJsonOf(id) {
+    const d = diagramFor(id); if (!d) return;
+    download(safeName(d.name) + '.json', JSON.stringify(Model.toJSON(d), null, 2), 'application/json');
   }
+  function exportHtmlOf(id) {
+    const d = diagramFor(id); if (!d) return;
+    download(safeName(d.name) + '.html', buildStandaloneHtml(d), 'text/html');
+  }
+  const exportJson = () => exportJsonOf(D.id);
   function exportAll() {
     flushSave();
     const diagrams = Store.list().map(x => Store.load(x.id)).filter(Boolean).map(Model.toJSON);
@@ -1030,10 +1036,7 @@
       `<script>\n"use strict";\nvar ERD = (${code})();\nERD.runViewer(JSON.parse(document.getElementById("erd-data").textContent));\n</script>\n` +
       '</body>\n</html>\n';
   }
-  function exportHtml() {
-    flushSave();
-    download(safeName(D.name) + '.html', buildStandaloneHtml(D), 'text/html');
-  }
+  const exportHtml = () => exportHtmlOf(D.id);
   /* SVG: клон слоёв с вычисленными стилями (файл не зависит от CSS-переменных) */
   const STYLE_PROPS = ['fill', 'fill-opacity', 'stroke', 'stroke-opacity', 'stroke-width', 'stroke-dasharray', 'opacity',
     'font-family', 'font-size', 'font-weight', 'font-style', 'text-anchor', 'letter-spacing'];
@@ -1098,19 +1101,37 @@
     list.forEach(x => {
       const cur = D && x.id === D.id;
       const info = cur ? { name: D.name, tables: D.tables.length, updatedAt: D.updatedAt } : x;
+      const open = ev => { ev.preventDefault(); openDiagramMenu(x.id, info.name, ev); };
       ul.appendChild(el('li', { class: 'ditem' + (cur ? ' cur' : '') }, [
-        el('button', { type: 'button', class: 'dopen', 'aria-current': cur ? 'true' : null, 'data-k': 'o' + x.id, onclick: () => switchTo(x.id) }, [
+        el('button', {
+          type: 'button', class: 'dopen', 'aria-current': cur ? 'true' : null, 'aria-haspopup': 'menu', 'aria-expanded': 'false',
+          'data-k': 'o' + x.id, onclick: open, oncontextmenu: open,
+          ondblclick: () => { closePopup(); switchTo(x.id); }
+        }, [
           el('span', { class: 'dn', text: info.name }),
-          el('span', { class: 'dm', text: plural(info.tables || 0, L.tablesN) + ' · ' + timeLabel(info.updatedAt) })
-        ]),
-        el('div', { class: 'dact' }, [
-          btn('✎', () => renameDiagram(x.id), null, { 'aria-label': L.rename + ': ' + info.name, title: L.rename, 'data-k': 'r' + x.id }),
-          btn('⧉', () => duplicateDiagram(x.id), null, { 'aria-label': L.duplicate + ': ' + info.name, title: L.duplicate, 'data-k': 'd' + x.id }),
-          btn('✕', () => deleteDiagram(x.id), null, { 'aria-label': L.del + ': ' + info.name, title: L.del, 'data-k': 'x' + x.id })
+          el('span', { class: 'dm', text: plural(info.tables || 0, L.tablesN) + ' · ' + timeLabel(info.updatedAt) }),
+          el('span', { class: 'dmore', text: '⋯', 'aria-hidden': 'true' })
         ])
       ]));
     });
     restoreFocus(ul, key);
+  }
+  function openDiagramMenu(id, name, ev) {
+    const anchor = ev.currentTarget;
+    /* повторный клик по той же диаграмме закрывает меню */
+    if (lastPopup && lastPopup.id === id && performance.now() - lastPopup.t < 350) return;
+    const cur = D && id === D.id, r = anchor.getBoundingClientRect();
+    const pt = ev.type === 'click' && ev.detail === 0 ? { x: r.left + 12, y: r.bottom + 2 } : { x: ev.clientX, y: ev.clientY };
+    popupMenu([
+      cur ? null : { label: L.dmOpen, fn: () => switchTo(id) },
+      { label: L.dmExportJson, fn: () => exportJsonOf(id) },
+      { label: L.dmExportHtml, fn: () => exportHtmlOf(id) },
+      '-',
+      { label: L.dmRename, fn: () => renameDiagram(id) },
+      { label: L.dmDuplicate, fn: () => duplicateDiagram(id) },
+      '-',
+      { label: L.dmDelete, fn: () => deleteDiagram(id), danger: true }
+    ].filter(Boolean), pt, anchor, fmt(L.dmMenuAria, { name }), id);
   }
   function switchTo(id) {
     if (D && id === D.id) return;
@@ -1242,13 +1263,109 @@
   function closeMenu(focusBtn) { if (menu.hidden) return; menu.hidden = true; fileBtn.setAttribute('aria-expanded', 'false'); if (focusBtn) fileBtn.focus(); }
   fileBtn.addEventListener('click', () => (menu.hidden ? openMenu() : closeMenu()));
   document.addEventListener('pointerdown', e => { if (!menu.hidden && !menu.contains(e.target) && !fileBtn.contains(e.target)) closeMenu(); }, true);
-  menu.addEventListener('keydown', e => {
-    const items = [...menu.querySelectorAll('button')], i = items.indexOf(document.activeElement);
-    if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(true); }
-    else if (e.key === 'Tab') closeMenu();
-  });
+  function menuKeys(m, close) {
+    m.addEventListener('keydown', e => {
+      const items = [...m.querySelectorAll('button')], i = items.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
+      else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); items[e.key === 'Home' ? 0 : items.length - 1].focus(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); }
+      else if (e.key === 'Tab') close(false);
+    });
+  }
+  menuKeys(menu, closeMenu);
+
+  /* всплывающее меню (действия с диаграммой в левой панели) */
+  let popup = null, lastPopup = null;
+  function closePopup(focusAnchor) {
+    if (!popup) return;
+    const p = popup; popup = null;
+    p.m.remove(); p.anchor.setAttribute('aria-expanded', 'false');
+    lastPopup = { id: p.id, t: performance.now() };
+    if (focusAnchor && p.anchor.isConnected) p.anchor.focus();
+  }
+  function popupMenu(items, pt, anchor, label, id) {
+    closePopup(); lastPopup = null;
+    const m = el('div', { class: 'menu popup', role: 'menu', 'aria-label': label });
+    items.forEach(it => {
+      if (it === '-') { m.appendChild(el('hr', { role: 'separator' })); return; }
+      m.appendChild(el('button', {
+        type: 'button', role: 'menuitem', class: it.danger ? 'danger' : null,
+        onclick: () => { closePopup(true); lastPopup = null; it.fn(); }
+      }, el('span', { text: it.label })));
+    });
+    document.body.appendChild(m);
+    m.style.left = Math.max(8, Math.min(pt.x, innerWidth - m.offsetWidth - 8)) + 'px';
+    m.style.top = Math.max(8, Math.min(pt.y, innerHeight - m.offsetHeight - 8)) + 'px';
+    anchor.setAttribute('aria-expanded', 'true');
+    popup = { m, anchor, id };
+    menuKeys(m, closePopup);
+    m.querySelector('button').focus();
+  }
+  document.addEventListener('pointerdown', e => { if (popup && !popup.m.contains(e.target)) closePopup(); }, true);
+  addEventListener('resize', () => closePopup());
+
+  /* ======================= СПРАВКА И ПРОМПТЫ ДЛЯ НЕЙРОСЕТИ ======================= */
+  /* JSON для промпта: без раскладки и служебных полей — меньше токенов */
+  function schemaForAi(d) {
+    const o = Model.toJSON(d);
+    delete o.view; delete o.updatedAt; delete o.id;
+    o.groups.forEach(g => { delete g.colorDark; });
+    o.tables.forEach(t => { delete t.x; delete t.y; });
+    return JSON.stringify(o, null, 2);
+  }
+  function copyText(text) { writeClipboard(text); toast(L.aiCopied); }
+  const promptWithSchema = () => { flushSave(); return L.promptFromJson.replace(L.promptJsonPlaceholder, schemaForAi(D)); };
+  async function showPrompt(title, text) {
+    const ta = el('textarea', { readonly: true, value: text, 'aria-label': title, spellcheck: 'false' });
+    const v = await dialog({
+      title, body: ta, onOpen: () => { ta.scrollTop = 0; },
+      buttons: [{ value: 'copy', label: L.aiCopy, primary: true }, { value: '', label: L.close }]
+    });
+    if (v === 'copy') copyText(text);
+  }
+  async function importAiAnswer() {
+    const ta = el('textarea', { spellcheck: 'false', 'aria-label': L.aiImportTitle });
+    const v = await dialog({
+      title: L.aiImportTitle, body: [el('p', { class: 'hint', text: L.aiImportHelp }), ta],
+      buttons: [{ value: 'ok', label: L.aiImportBtn, primary: true }, { value: '', label: L.cancel }],
+      onOpen: () => ta.focus(),
+      validate: () => { try { Model.parseAny(ta.value); return null; } catch (e) { return e.message; } }
+    });
+    if (v === 'ok') importText(ta.value, 'answer.json');
+  }
+  function renderHelp() {
+    const reading = $('#help-reading');
+    ERD.buildLegend(reading, false);
+    const title = reading.querySelector('b'); if (title) { title.nextSibling.remove(); title.remove(); }
+    reading.appendChild(el('p', { class: 'hint', text: L.helpReadingHint }));
+    append($('#help-controls'), el('dl', { class: 'hdl' }, L.controls.map(([a, b]) => [el('dt', { text: a }), el('dd', { text: b })])));
+    append($('#help-keys'), [
+      el('dl', { class: 'hdl keys' }, L.keys.map(([a, b]) => [el('dt', {}, a.split(/(, | \/ )/).map(k => (/^(, | \/ )$/.test(k) ? k : el('kbd', { text: k })))), el('dd', { text: b })])),
+      el('p', { class: 'hint', text: L.keysNote })
+    ]);
+    const card = (title, text, buttons) => el('div', { class: 'aicard' }, [el('h4', { text: title }), el('p', { class: 'hint', text }), el('div', { class: 'aibtns' }, buttons)]);
+    append($('#help-ai'), [
+      el('p', { class: 'hint', text: L.aiIntro }),
+      card(L.aiToJsonTitle, L.aiToJsonText, [
+        btn(L.aiCopy, () => copyText(L.promptToJson), 'primary'),
+        btn(L.aiShow, () => showPrompt(L.aiToJsonTitle, L.promptToJson)),
+        btn(L.aiImport, importAiAnswer)
+      ]),
+      card(L.aiFromJsonTitle, L.aiFromJsonText, [
+        btn(L.aiCopyWithJson, () => copyText(promptWithSchema()), 'primary'),
+        btn(L.aiCopy, () => copyText(L.promptFromJson)),
+        btn(L.aiShow, () => showPrompt(L.aiFromJsonTitle, promptWithSchema()))
+      ])
+    ]);
+    /* какие разделы раскрыты — запоминается */
+    const open = prefs.help || {};
+    document.querySelectorAll('#sidebar details[data-help]').forEach(d => {
+      const k = d.dataset.help;
+      if (k in open) d.open = !!open[k];
+      d.addEventListener('toggle', () => { prefs.help = Object.assign({}, prefs.help, { [k]: d.open }); savePrefs(); });
+    });
+  }
 
   /* ======================= ГОРЯЧИЕ КЛАВИШИ ======================= */
   document.addEventListener('keydown', e => {
@@ -1320,7 +1437,7 @@
 
   /* ======================= ИНИЦИАЛИЗАЦИЯ ======================= */
   function init() {
-    applyI18n(); renderMenu(); setTh();
+    applyI18n(); renderMenu(); renderHelp(); setTh();
     setMode(mode);
     if (wide()) setSidebar(!!prefs.sidebar); else $('#sb-toggle').setAttribute('aria-expanded', 'false');
     $('#b-snap').setAttribute('aria-pressed', String(!!prefs.snap));

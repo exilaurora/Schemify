@@ -157,6 +157,130 @@ function ERDCoreFactory() {
     noGroups: 'Групп пока нет. Таблицы без группы рисуются без рамки.',
     emptyHint: 'Диаграмма пуста. Двойной клик по фону или «+ Таблица» — создать таблицу; «Файл → Загрузить пример» — большая демонстрационная схема.',
 
+    /* справка в левой панели */
+    helpReading: 'Как читать схему',
+    helpControls: 'Управление',
+    helpKeys: 'Горячие клавиши',
+    helpAi: 'Нейросеть: импорт и экспорт схемы БД',
+    helpReadingHint: 'Наведите на таблицу или выделите её — подсветятся её связи и соседние таблицы, остальное затемнится.',
+    controls: [
+      ['Двигать схему', 'тянуть фон мышью · два пальца по тачпаду · два пальца на экране · Shift+колесо — по горизонтали'],
+      ['Масштаб', 'колесо мыши · щипок на тачпаде или экране · Ctrl+колесо'],
+      ['Выделить', 'клик по таблице · Shift/Ctrl+клик — добавить · Shift+тянуть по фону — рамка'],
+      ['Переместить', 'тянуть карточку (выделенные двигаются вместе) · тянуть заголовок группы — всю группу'],
+      ['В группу', 'бросить таблицу на рамку другой группы или выбрать группу в панели справа'],
+      ['Новая таблица', 'двойной клик по фону (внутри рамки группы — сразу в группу) или «+ Таблица»'],
+      ['Переименовать', 'двойной клик по имени таблицы, столбцу или заголовку группы'],
+      ['Связь FK', 'тянуть кружок ● справа у строки столбца на другую таблицу (на её PK или нужную строку)'],
+      ['Свойства', 'панель справа: столбцы, типы, PK/UQ/NULL, FK, UNIQUE, описание; ⋮⋮ — порядок столбцов'],
+      ['Группы', 'кнопка «Группы»: название, цвета для светлой и тёмной темы, удаление'],
+      ['Диаграммы', 'клик по диаграмме в списке — меню (открыть, экспорт, переименовать, дублировать, удалить); двойной клик — открыть'],
+      ['Импорт', 'перетащить .json или экспортированный .html в окно · «Файл → Импорт»'],
+      ['Мини-карта', 'клик или перетаскивание — перейти к месту схемы']
+    ],
+    keys: [
+      ['Ctrl+Z', 'отменить'], ['Ctrl+Shift+Z, Ctrl+Y', 'повторить'],
+      ['Ctrl+C / Ctrl+X / Ctrl+V', 'копировать / вырезать / вставить таблицы'],
+      ['Ctrl+D', 'дублировать выделенное'], ['Ctrl+A', 'выделить все видимые'],
+      ['Delete, Backspace', 'удалить выделенное'], ['Ctrl+S', 'экспорт JSON'],
+      ['Ctrl+F', 'поиск (Enter — следующее совпадение)'], ['F', 'схема по размеру окна'],
+      ['Esc', 'снять выделение, отменить перетаскивание'], ['Enter / Esc', 'в поле ввода — применить / выйти'],
+      ['Alt+↑ / Alt+↓', 'на ⋮⋮ столбца — сдвинуть столбец']
+    ],
+    keysNote: 'На macOS вместо Ctrl — Cmd. Клавиши работают в любой раскладке и не перехватываются, пока курсор в поле ввода.',
+    aiIntro: 'Скопируйте промпт, вставьте в ChatGPT, Claude и т.п. вместе со своей схемой — и получите результат.',
+    aiToJsonTitle: 'БД → JSON для импорта',
+    aiToJsonText: 'Из .sql, моделей SQLAlchemy / Django / Prisma — в файл для этого редактора.',
+    aiFromJsonTitle: 'JSON → схема БД',
+    aiFromJsonText: 'Из диаграммы — в SQL DDL (PostgreSQL) или модели SQLAlchemy 2.0.',
+    aiCopy: 'Копировать промпт',
+    aiCopyWithJson: 'Копировать с текущей схемой',
+    aiShow: 'Показать',
+    aiImport: 'Импортировать ответ…',
+    aiCopied: 'Промпт скопирован',
+    aiImportTitle: 'Импорт ответа нейросети',
+    aiImportHelp: 'Вставьте JSON, который вернула нейросеть (обёртку ```json можно не убирать).',
+    aiImportBtn: 'Импортировать',
+    promptToJson: `Ты — конвертер схем баз данных. Преобразуй схему БД, приложенную в конце (SQL DDL, модели SQLAlchemy / Django / Prisma или текстовое описание; может быть несколько файлов), в JSON для импорта в «Редактор ER-диаграмм».
+
+Верни ТОЛЬКО JSON одним блоком, без пояснений.
+
+Формат:
+{
+  "format": "erd-generator",
+  "version": 1,
+  "name": "<название схемы>",
+  "groups": [
+    { "id": "<латиница, цифры, _ или ->", "title": "<название группы>", "color": "#rrggbb" }
+  ],
+  "tables": [
+    {
+      "id": "<уникальный id таблицы, например t_users>",
+      "name": "<имя таблицы как в БД>",
+      "group": "<id группы или null>",
+      "description": "<что хранит таблица; возьми из COMMENT, docstring или придумай кратко по смыслу>",
+      "partitioned": false,
+      "uniques": ["UNIQUE(col_a, col_b)"],
+      "columns": [
+        { "name": "id", "type": "bigint", "pk": true, "unique": false, "nullable": false, "ref": null },
+        { "name": "user_id", "type": "bigint", "pk": false, "unique": false, "nullable": false,
+          "ref": { "table": "<id целевой таблицы>", "column": null } }
+      ]
+    }
+  ]
+}
+
+Правила:
+1. Не указывай x, y и view — редактор расставит таблицы сам.
+2. ref.table — это id таблицы из этого же JSON, а не её имя. ref.column = null означает ссылку на первичный ключ; имя столбца указывай, только если внешний ключ ссылается не на PK.
+3. Составной первичный ключ — pk: true у каждого столбца ключа. Одиночный UNIQUE — флаг unique: true; составной — строка "UNIQUE(a, b)" в uniques.
+4. nullable: true только если столбец допускает NULL (в SQLAlchemy — nullable=True или Mapped[Optional[...]] / Mapped[... | None]). Столбцы PK всегда nullable: false.
+5. type — тип PostgreSQL в нижнем регистре: bigint, int, smallint, text, varchar(255), numeric(12,2), bool, date, timestamptz, jsonb, uuid, inet… Типы SQLAlchemy переводи: Integer → int, BigInteger → bigint, SmallInteger → smallint, String(n) → varchar(n), Text → text, Boolean → bool, DateTime(timezone=True) → timestamptz, DateTime → timestamp, Date → date, Numeric(p, s) → numeric(p,s), Float → real, JSON/JSONB → jsonb, UUID → uuid, Enum → text (или имя enum-типа), LargeBinary → bytea.
+6. Таблицы с PARTITION BY — partitioned: true.
+7. Таблицы связей многие-ко-многим (association tables, Table(...)) включай как обычные таблицы.
+8. Разбей таблицы на 3–8 смысловых групп (справочники, пользователи, заказы и т.п.) с различимыми цветами, например #2f7dd1, #1f9d7a, #d98a1c, #d0473f, #8a5cd6, #c2497d, #5f8f2f, #6f7f9c. Если группировка не нужна — group: null и пустой groups.
+9. Ничего не выдумывай: только таблицы, столбцы и связи из исходника. Если файлов несколько — объедини всё в одну схему.
+
+Схема БД:
+<вставьте сюда содержимое .sql или .py-файлов>`,
+    promptFromJson: `Ты — опытный разработчик баз данных. Ниже — JSON-описание схемы БД из «Редактора ER-диаграмм» (формат erd-generator). Сгенерируй по нему: <ВЫБЕРИ: PostgreSQL DDL (.sql) | модели SQLAlchemy 2.0 (.py)>.
+
+Как читать JSON:
+- tables[] — таблицы: name — имя, description — комментарий к таблице, group — id логического раздела из groups[].
+- columns[] — столбцы по порядку: name, type (тип PostgreSQL), pk, unique, nullable.
+- ref — внешний ключ: ref.table — id целевой таблицы (найди в tables[] таблицу с таким id), ref.column — столбец в ней; null — первичный ключ целевой таблицы.
+- Несколько столбцов с pk: true — составной первичный ключ.
+- uniques — составные ограничения UNIQUE(...), переносить как есть.
+- partitioned: true — секционированная таблица (PARTITION BY RANGE по подходящему столбцу времени; если столбец неочевиден — оставь TODO-комментарий).
+- x, y, view, color, colorDark — данные раскладки на холсте, игнорируй.
+
+Требования для SQL:
+- CREATE TABLE в порядке зависимостей; для циклических ссылок — ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY после создания таблиц.
+- NOT NULL по nullable: false, PRIMARY KEY, UNIQUE, REFERENCES; индексы на столбцы внешних ключей.
+- COMMENT ON TABLE из description; группы — комментариями-разделителями.
+- Тип tstz означает timestamptz.
+
+Требования для SQLAlchemy 2.0:
+- DeclarativeBase, Mapped[...] и mapped_column(...), ForeignKey(...), Optional[...] для nullable-столбцов.
+- relationship(...) с back_populates для обеих сторон каждой связи; для таблиц «многие-ко-многим» из двух FK — secondary.
+- UniqueConstraint и составные PK — через __table_args__; description — в docstring класса.
+- Типы: bigint → BigInteger, int → Integer, text → Text, varchar(n) → String(n), bool → Boolean, timestamptz/tstz → DateTime(timezone=True), jsonb → JSONB, uuid → Uuid, inet → INET и т.д.
+
+Не добавляй таблиц и столбцов, которых нет в JSON. Верни только код.
+
+JSON схемы:
+<вставьте сюда JSON — кнопка «Копировать с текущей схемой» подставляет его автоматически>`,
+    promptJsonPlaceholder: '<вставьте сюда JSON — кнопка «Копировать с текущей схемой» подставляет его автоматически>',
+
+    /* меню диаграммы в левой панели */
+    dmOpen: 'Открыть',
+    dmExportJson: 'Экспортировать JSON',
+    dmExportHtml: 'Экспортировать HTML',
+    dmRename: 'Переименовать…',
+    dmDuplicate: 'Дублировать',
+    dmDelete: 'Удалить…',
+    dmMenuAria: 'Действия с диаграммой «{name}»',
+
     /* уведомления */
     undone: 'Отменено',
     redone: 'Повторено',
@@ -890,8 +1014,8 @@ button:hover{border-color:var(--muted)}
     append(box, [
       el('b', { text: STR.legendTitle }), el('br'),
       el('span', { class: 'ls' }), STR.legendNotNull + '   ', el('span', { class: 'ls d' }), STR.legendNull, el('br'),
-      STR.legendEnds, el('br'),
-      el('span', { class: 'lh', text: extra || STR.legendHint })
+      STR.legendEnds,
+      extra === false ? null : [el('br'), el('span', { class: 'lh', text: extra || STR.legendHint })]
     ]);
   }
 

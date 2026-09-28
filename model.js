@@ -159,9 +159,15 @@ var Model = (function () {
       }
     }));
   }
+  /* ссылки по старым id → новые; ссылка по имени таблицы (частая ошибка ИИ) → её id */
   function remapRefs(tables, idMap) {
-    if (!idMap.size) return;
-    tables.forEach(t => t.columns.forEach(c => { if (c.ref && idMap.has(c.ref.table)) c.ref.table = idMap.get(c.ref.table); }));
+    const ids = new Set(tables.map(t => t.id)), byName = new Map();
+    tables.forEach(t => { if (!byName.has(t.name)) byName.set(t.name, t.id); });
+    tables.forEach(t => t.columns.forEach(c => {
+      if (!c.ref) return;
+      if (idMap.has(c.ref.table)) c.ref.table = idMap.get(c.ref.table);
+      else if (!ids.has(c.ref.table) && byName.has(c.ref.table)) c.ref.table = byName.get(c.ref.table);
+    }));
   }
 
   /* миграции: ключ — исходная версия, функция поднимает объект на версию выше */
@@ -244,6 +250,15 @@ var Model = (function () {
     if (!s || !s.textContent.trim()) throw new ModelError(S.eHtml);
     return s.textContent;
   }
+  /* ответ нейросети: снимаем обёртку ```json … ``` и текст вокруг JSON-объекта */
+  function unwrapJSON(text) {
+    const t = text.trim();
+    if (t[0] === '{' || t[0] === '[') return t;
+    const fence = t.match(/```[a-zA-Z]*\s*\n([\s\S]*?)```/);
+    if (fence && /^\s*[{[]/.test(fence[1])) return fence[1];
+    const a = t.indexOf('{'), b = t.lastIndexOf('}');
+    return a >= 0 && b > a ? t.slice(a, b + 1) : t;
+  }
   function parseJSON(text) {
     try { return JSON.parse(text); } catch (e) { throw new ModelError(fmt(S.eJson, { msg: e.message })); }
   }
@@ -251,7 +266,7 @@ var Model = (function () {
   function parseAny(text, filename) {
     text = String(text || '').replace(/^﻿/, '');
     const looksHtml = /\.html?$/i.test(filename || '') || /^\s*</.test(text);
-    const raw = parseJSON(looksHtml ? extractFromHtml(text) : text);
+    const raw = parseJSON(looksHtml && !/^\s*```/.test(text) ? extractFromHtml(text) : unwrapJSON(text));
     if (!isObj(raw)) throw new ModelError(S.eNotObject);
     const warnings = [];
     if (raw.format === BUNDLE) {
