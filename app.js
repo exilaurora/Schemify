@@ -383,6 +383,7 @@
   });
 
   /* ======================= ПАНЕЛЬ СВОЙСТВ ======================= */
+  let panelHoldId = null;
   function renderPanel(focus) {
     const key = focus || focusKey(pc);
     const newKey = mode + '|' + (sel.size ? [...sel].join(',') : groupsPanel ? 'groups' : '');
@@ -390,7 +391,10 @@
     panelKey = newKey;
     pc.textContent = '';
     let open = true;
-    if (sel.size === 1) {
+    /* таблица выделена захватом для перетаскивания — панель не открываем, пока не будет клика */
+    const held = sel.size === 1 && panelHoldId && sel.has(panelHoldId);
+    if (held) open = false;
+    else if (sel.size === 1) {
       const t = byId([...sel][0]);
       if (mode === 'edit') tablePanel(t); else ERD.renderDetails(pc, D, R.idx, t, linkTo);
     } else if (sel.size > 1) multiPanel();
@@ -682,7 +686,13 @@
         drag = Object.assign(base, { type: 'none' });
       } else if (edit) {
         const wasSel = sel.has(id);
-        if (!wasSel) { sel.clear(); sel.add(id); groupsPanel = false; R.refresh(); renderPanel(); }
+        if (!wasSel) {
+          sel.clear(); sel.add(id); groupsPanel = false;
+          /* панель откроется по клику (отпусканию без сдвига), а не в момент захвата;
+             на ПК уже открытая панель просто переключается на новую таблицу */
+          panelHoldId = ev.pointerType === 'touch' || !panel.classList.contains('open') ? id : null;
+          R.refresh(); renderPanel();
+        }
         const ids = [...sel].filter(x => { const t = byId(x); return t && R.isVisible(t); });
         drag = Object.assign(base, { type: 'move', id, ids, wasSel, start: new Map(ids.map(x => [x, { x: byId(x).x, y: byId(x).y }])) });
       } else {
@@ -771,9 +781,15 @@
           changed({ ids: d.ids });
           toast(fmt(L.movedToGroup, { name: ERD.groupById(D, drop).title }));
         } else { R.moveTables(d.ids); changed({ render: false, panel: false }); }
+      } else if (cancelled) {
+        /* захват прерван жестом двумя пальцами — ничего не открываем */
       } else if (d.group) {
         groupsPanel = true; sel.clear(); R.refresh(); renderPanel('g-' + d.gid + '-title');
-      } else if (d.wasSel && sel.size > 1) setSelection([d.id]);
+      } else {
+        /* клик по таблице без перемещения — открыть её панель */
+        panelHoldId = null;
+        if (d.wasSel && sel.size > 1) setSelection([d.id]); else renderPanel();
+      }
     } else if (d.type === 'marquee') {
       d.rect.remove();
       /* простой клик по фону снимает выделение */
@@ -786,9 +802,10 @@
   svg.addEventListener('pointerup', ev => endDrag(ev, false));
   svg.addEventListener('pointercancel', ev => endDrag(ev, true));
   svg.addEventListener('pointerleave', () => { pointerInside = false; if (!drag && st.hovered) { st.hovered = null; if (!sel.size) R.refresh(); } });
-  /* Сенсорный экран: палец по фону двигает схему, два пальца — масштаб.
-     Рамка выделения — двойное касание: коснуться, отпустить и сразу коснуться снова и тянуть. */
-  let lastTap = null, lastPointerType = 'mouse';
+  /* Сенсорный экран (мышь и тачпад не меняются): один палец по фону — панорама,
+     два пальца в режиме правки — рамка выделения между пальцами, в просмотре — щипок.
+     Масштаб одним пальцем: двойное касание, или двойное касание и тянуть вверх/вниз. */
+  let lastPointerType = 'mouse', touchRect = null;
   /* регистрируется раньше attachNavigation, чтобы видеть и касания, которые она перехватывает */
   addEventListener('pointerdown', e => { lastPointerType = e.pointerType; }, true);
   R.attachNavigation({
@@ -797,17 +814,26 @@
     shouldPan: ev => {
       const t = ev.target;
       if (R.nodeIdOf(t)) return false;                                   /* карточка — перетаскивание */
-      if (mode !== 'edit') return true;
-      if (t.classList && t.classList.contains('gtitle')) return false;    /* заголовок группы — двигать группу */
-      const dbl = lastTap && performance.now() - lastTap.t < ERD.NAV.DOUBLE_TAP_MS &&
-        Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < ERD.NAV.DOUBLE_TAP_DIST;
-      lastTap = null;
-      return !dbl;                                                          /* второе касание — рамка */
+      if (mode === 'edit' && t.classList && t.classList.contains('gtitle')) return false;  /* двигать группу */
+      return true;
     },
-    onTap: ev => {
-      lastTap = { t: performance.now(), x: ev.clientX, y: ev.clientY };
-      if (sel.size || groupsPanel) { groupsPanel = false; setSelection([]); }
-    }
+    onTap: () => { if (sel.size || groupsPanel) { groupsPanel = false; setSelection([]); } },
+    twoFinger: () => (mode === 'edit' ? 'select' : 'zoom'),
+    onRectStart: () => { touchRect = ERD.mk('rect', { class: 'marquee' }, R.ol); groupsPanel = false; },
+    onRectMove: (a, b) => {
+      const p = R.toWorld(a.x, a.y), q = R.toWorld(b.x, b.y);
+      const x0 = Math.min(p.x, q.x), y0 = Math.min(p.y, q.y), x1 = Math.max(p.x, q.x), y1 = Math.max(p.y, q.y);
+      touchRect.setAttribute('x', x0); touchRect.setAttribute('y', y0);
+      touchRect.setAttribute('width', x1 - x0); touchRect.setAttribute('height', y1 - y0);
+      sel.clear();
+      D.tables.forEach(t => {
+        if (!R.isVisible(t)) return;
+        const n = R.info(t.id);
+        if (t.x < x1 && t.x + n.w > x0 && t.y < y1 && t.y + n.h > y0) sel.add(t.id);
+      });
+      R.refresh();
+    },
+    onRectEnd: () => { if (touchRect) touchRect.remove(); touchRect = null; renderPanel(); }
   });
 
   function finishLink(d, ev) {

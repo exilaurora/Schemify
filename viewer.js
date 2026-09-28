@@ -22,7 +22,7 @@ function ERDCoreFactory() {
   const NAV = {
     MOUSE_WHEEL: 0.0012, PINCH_WHEEL: 0.012, PINCH_WHEEL_CLAMP: 25, PINCH_TOUCH_POW: 1.6,
     TRACKPAD_MAX_DELTA: 50, WHEEL_SERIES_MS: 220,
-    TAP_SLOP: 8, DOUBLE_TAP_MS: 350, DOUBLE_TAP_DIST: 40
+    TAP_SLOP: 8, DOUBLE_TAP_MS: 350, DOUBLE_TAP_DIST: 40, DOUBLE_TAP_ZOOM: 1.8, ONE_FINGER_ZOOM: 0.008
   };
   const MONO = 'ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace';
   const MONO2 = 'ui-monospace,Menlo,Consolas,monospace';
@@ -165,8 +165,8 @@ function ERDCoreFactory() {
     helpAi: 'Нейросеть: импорт и экспорт схемы БД',
     controls: [
       ['Двигать схему', 'тянуть средней кнопкой мыши · два пальца по тачпаду · Shift+колесо — по горизонтали · на телефоне и планшете — один палец по фону'],
-      ['Масштаб на экране', 'щипок двумя пальцами'],
-      ['Выделение на экране', 'двойное касание: коснуться фона, отпустить и сразу коснуться снова и тянуть — рамка выделения; касание таблицы — выбрать, тянуть таблицу — переместить'],
+      ['Масштаб на экране', 'двойное касание — приблизить; двойное касание и тянуть вниз/вверх — плавно приблизить/отдалить; в режиме «Просмотр» — ещё и щипок двумя пальцами'],
+      ['Выделение на экране', 'в режиме «Правка» — двумя пальцами: рамка растягивается между пальцами; касание таблицы — выбрать и открыть свойства, тянуть таблицу — переместить'],
       ['Масштаб', 'колесо мыши · щипок на тачпаде или экране · Ctrl+колесо'],
       ['Выделить', 'клик по таблице · тянуть левой кнопкой по фону — рамка · Shift/Ctrl+клик или Shift+рамка — добавить к выделению. В режиме «Просмотр» выделения нет: клик по таблице только показывает её детали'],
       ['Переместить', 'тянуть карточку (выделенные двигаются вместе) · тянуть заголовок группы — всю группу'],
@@ -937,26 +937,40 @@ button:hover{border-color:var(--muted)}
       });
       addEventListener('gestureend', ev => { ev.preventDefault(); this._gestureScale = false; });
 
-      /* Сенсорный экран. Перехват на window в фазе capture — раньше обработчиков приложения
-         в любом браузере. Один палец по фону — панорама (o.shouldPan решает, что считать фоном),
-         два пальца — панорама + масштаб. Лёгкое касание без сдвига — o.onTap. */
+      /* Сенсорный экран (мышь и тачпад не затрагиваются). Перехват на window в фазе capture —
+         раньше обработчиков приложения в любом браузере.
+         • один палец по фону (o.shouldPan) — панорама; касание без сдвига — o.onTap;
+         • двойное касание фона — приближение; двойное касание и тянуть вверх/вниз — плавный масштаб;
+         • два пальца: o.twoFinger() === 'select' — рамка выделения между пальцами (o.onRect*),
+           иначе — щипок (масштаб + панорама). */
       const inSvg = t => t === svg || (t && t.nodeType === 1 && svg.contains(t));
       const mid = () => { const [a, b] = [...touches.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1 }; };
       const anchor = p => { const r = svg.getBoundingClientRect(), v = this.d.view; return { wx: (p.x - r.left - v.x) / v.k, wy: (p.y - r.top - v.y) / v.k }; };
-      let g = null;   /* текущий жест: {mode:'pan'|'pinch', ...} */
+      let g = null, lastTap = null;   /* g — текущий жест: pan | zoom1 | pinch | rect | idle */
       const startPan = (p, moved) => { g = Object.assign({ mode: 'pan', p0: { x: p.x, y: p.y }, moved: !!moved }, anchor(p)); };
       const startPinch = () => { const m = mid(); g = Object.assign({ mode: 'pinch', d0: m.d, k0: this.d.view.k }, anchor(m)); };
       const stop = ev => { ev.stopImmediatePropagation(); if (ev.cancelable) ev.preventDefault(); };
+      const isDoubleTap = p => lastTap && performance.now() - lastTap.t < NAV.DOUBLE_TAP_MS &&
+        Math.hypot(p.x - lastTap.x, p.y - lastTap.y) < NAV.DOUBLE_TAP_DIST;
       addEventListener('pointerdown', ev => {
         if (ev.pointerType !== 'touch' || !inSvg(ev.target)) return;
-        touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+        const p = { x: ev.clientX, y: ev.clientY };
+        touches.set(ev.pointerId, p);
         if (touches.size === 2) {
+          if (g && (g.mode === 'rect' || g.mode === 'idle')) { stop(ev); return; }
           if (o.onStart) o.onStart();
           if (o.onGesture) o.onGesture();       /* приложение отменяет своё перетаскивание */
-          startPinch(); svg.classList.add('panning'); stop(ev);
+          if (o.twoFinger && o.twoFinger() === 'select') {
+            g = { mode: 'rect' };
+            if (o.onRectStart) o.onRectStart();
+            const [a, b] = [...touches.values()]; if (o.onRectMove) o.onRectMove(a, b);
+          } else { startPinch(); svg.classList.add('panning'); }
+          stop(ev);
         } else if (touches.size === 1 && (!o.shouldPan || o.shouldPan(ev))) {
           if (o.onStart) o.onStart();
-          startPan(touches.get(ev.pointerId));
+          if (isDoubleTap(p)) g = Object.assign({ mode: 'zoom1', p0: p, k0: this.d.view.k, moved: false }, anchor(lastTap));
+          else startPan(p);
+          lastTap = null;
           try { svg.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
           stop(ev);
         } else if (g) stop(ev);
@@ -968,10 +982,21 @@ button:hover{border-color:var(--muted)}
         if (!g) return;
         stop(ev);
         const r = svg.getBoundingClientRect(), v = this.d.view;
+        if (g.mode === 'rect') {
+          if (touches.size >= 2 && o.onRectMove) { const [a, b] = [...touches.values()]; o.onRectMove(a, b); }
+          return;
+        }
         if (g.mode === 'pinch' && touches.size >= 2) {
           const m = mid();
           const k = Math.min(C.MAX_K, Math.max(C.MIN_K, g.k0 * Math.pow(m.d / g.d0, NAV.PINCH_TOUCH_POW)));
           v.k = k; v.x = m.x - r.left - g.wx * k; v.y = m.y - r.top - g.wy * k;
+        } else if (g.mode === 'zoom1') {
+          /* как в картах: тянуть вниз — приблизить, вверх — отдалить; точка касания остаётся на месте */
+          if (!g.moved && Math.abs(p.y - g.p0.y) > NAV.TAP_SLOP) g.moved = true;
+          if (!g.moved) return;
+          const k = Math.min(C.MAX_K, Math.max(C.MIN_K, g.k0 * Math.exp((p.y - g.p0.y) * NAV.ONE_FINGER_ZOOM)));
+          const sx = g.wx * v.k + v.x, sy = g.wy * v.k + v.y;
+          v.k = k; v.x = sx - g.wx * k; v.y = sy - g.wy * k;
         } else if (g.mode === 'pan') {
           if (!g.moved && Math.hypot(p.x - g.p0.x, p.y - g.p0.y) > NAV.TAP_SLOP) { g.moved = true; svg.classList.add('panning'); }
           if (!g.moved) return;
@@ -984,11 +1009,21 @@ button:hover{border-color:var(--muted)}
         touches.delete(ev.pointerId);
         if (!g) return;
         stop(ev);
-        if (g.mode === 'pinch' && touches.size === 1) startPan([...touches.values()][0], true);  /* без скачка */
+        if (g.mode === 'rect') {
+          if (o.onRectEnd) o.onRectEnd(ev.type === 'pointercancel');
+          g = touches.size ? { mode: 'idle' } : null;      /* оставшийся палец ничего не делает */
+        } else if (g.mode === 'pinch' && touches.size === 1) startPan([...touches.values()][0], true);  /* без скачка */
         else if (!touches.size) {
-          if (g.mode === 'pan' && !g.moved && ev.type === 'pointerup' && o.onTap) o.onTap(ev);
-          g = null; svg.classList.remove('panning');
+          const tapped = !g.moved && ev.type === 'pointerup';
+          if (g.mode === 'pan' && tapped) {
+            lastTap = { t: performance.now(), x: ev.clientX, y: ev.clientY };
+            if (o.onTap) o.onTap(ev);
+          } else if (g.mode === 'zoom1' && tapped) {
+            this.zoomAt(ev.clientX, ev.clientY, this.d.view.k * NAV.DOUBLE_TAP_ZOOM);  /* двойное касание — приблизить */
+          }
+          g = null;
         }
+        if (!g) svg.classList.remove('panning');
       };
       addEventListener('pointerup', up, true);
       addEventListener('pointercancel', up, true);
