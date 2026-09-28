@@ -22,7 +22,7 @@ function ERDCoreFactory() {
   const NAV = {
     MOUSE_WHEEL: 0.0012, PINCH_WHEEL: 0.012, PINCH_WHEEL_CLAMP: 25, PINCH_TOUCH_POW: 1.6,
     TRACKPAD_MAX_DELTA: 50, WHEEL_SERIES_MS: 220,
-    TAP_SLOP: 8, DOUBLE_TAP_MS: 350, DOUBLE_TAP_DIST: 40, DOUBLE_TAP_ZOOM: 1.8, ONE_FINGER_ZOOM: 0.008,
+    TAP_SLOP: 8, HOLD_MS: 350, DOUBLE_TAP_MS: 350, DOUBLE_TAP_DIST: 40, DOUBLE_TAP_ZOOM: 1.8, ONE_FINGER_ZOOM: 0.008,
     /* инерция панорамы пальцем: затухание ~как в iOS, скорость в px/мс */
     INERTIA_TAU: 400, INERTIA_MIN_SPEED: 0.12, INERTIA_MAX_SPEED: 4, INERTIA_SAMPLE_MS: 100, INERTIA_STALE_MS: 60,
     ZOOM_ANIM_MS: 220
@@ -987,6 +987,9 @@ button:hover{border-color:var(--muted)}
       /* Сенсорный экран (мышь и тачпад не затрагиваются). Перехват на window в фазе capture —
          раньше обработчиков приложения в любом браузере.
          • один палец по фону (o.shouldPan) — панорама; касание без сдвига — o.onTap;
+         • один палец по объекту (o.canHold, например карточка): провести — панорама,
+           удержать без сдвига (NAV.HOLD_MS) — o.onPress(ev) и дальше событиями управляет приложение
+           (перетаскивание); короткое касание — o.onPress(ev), а отпускание уходит приложению как клик;
          • двойное касание фона — приближение; двойное касание и тянуть вверх/вниз — плавный масштаб;
          • два пальца: o.twoFinger() === 'select' — рамка выделения между пальцами (o.onRect*),
            иначе — щипок (масштаб + панорама). */
@@ -1001,7 +1004,9 @@ button:hover{border-color:var(--muted)}
       }, true);
       const mid = () => { const [a, b] = [...touches.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1 }; };
       const anchor = p => { const r = svg.getBoundingClientRect(), v = this.d.view; return { wx: (p.x - r.left - v.x) / v.k, wy: (p.y - r.top - v.y) / v.k }; };
-      let g = null, lastTap = null;   /* g — текущий жест: pan | zoom1 | pinch | rect | idle */
+      let g = null, lastTap = null;   /* g — текущий жест: pan | zoom1 | pinch | rect | idle | hold */
+      let holdTimer = 0;
+      const clearHold = () => { clearTimeout(holdTimer); holdTimer = 0; };
       const startPan = (p, moved) => {
         g = Object.assign({ mode: 'pan', p0: { x: p.x, y: p.y }, moved: !!moved, samples: [{ x: p.x, y: p.y, t: performance.now() }] }, anchor(p));
       };
@@ -1023,6 +1028,7 @@ button:hover{border-color:var(--muted)}
         touches.set(ev.pointerId, p);
         if (touches.size === 2) {
           if (g && (g.mode === 'rect' || g.mode === 'idle')) { stop(ev); return; }
+          clearHold();
           if (o.onStart) o.onStart();
           if (o.onGesture) o.onGesture();       /* приложение отменяет своё перетаскивание */
           if (o.twoFinger && o.twoFinger() === 'select') {
@@ -1038,6 +1044,21 @@ button:hover{border-color:var(--muted)}
           lastTap = null;
           try { svg.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
           stop(ev);
+        } else if (touches.size === 1 && o.canHold && o.onPress && o.canHold(ev)) {
+          /* ждём: удержание отдаст касание приложению, сдвиг превратит его в панораму */
+          if (o.onStart) o.onStart();
+          lastTap = null;
+          g = { mode: 'hold', p0: p, ev0: ev };
+          const hg = g;
+          holdTimer = setTimeout(() => {
+            holdTimer = 0;
+            if (g !== hg) return;
+            g = null;
+            if (navigator.vibrate) try { navigator.vibrate(15); } catch (e) { /* ignore */ }
+            o.onPress(hg.ev0);
+          }, NAV.HOLD_MS);
+          try { svg.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
+          stop(ev);
         } else if (g) stop(ev);
       }, true);
       addEventListener('pointermove', ev => {
@@ -1046,6 +1067,10 @@ button:hover{border-color:var(--muted)}
         touches.set(ev.pointerId, p);
         if (!g) return;
         stop(ev);
+        if (g.mode === 'hold') {
+          if (Math.hypot(p.x - g.p0.x, p.y - g.p0.y) <= NAV.TAP_SLOP) return;
+          clearHold(); startPan(g.p0, true); svg.classList.add('panning');
+        }
         const r = svg.getBoundingClientRect(), v = this.d.view;
         if (g.mode === 'rect') {
           if (touches.size >= 2 && o.onRectMove) { const [a, b] = [...touches.values()]; o.onRectMove(a, b); }
@@ -1076,6 +1101,12 @@ button:hover{border-color:var(--muted)}
         if (ev.pointerType !== 'touch' || !touches.has(ev.pointerId)) return;
         touches.delete(ev.pointerId);
         if (!g) return;
+        if (g.mode === 'hold') {
+          /* короткое касание объекта: приложение получает нажатие, а само отпускание проходит к нему как клик */
+          const e0 = g.ev0; clearHold(); g = null;
+          if (ev.type === 'pointerup') o.onPress(e0); else stop(ev);
+          return;
+        }
         stop(ev);
         if (g.mode === 'rect') {
           if (o.onRectEnd) o.onRectEnd(ev.type === 'pointercancel');
@@ -1270,18 +1301,22 @@ button:hover{border-color:var(--muted)}
     R.attachNavigation({
       scrollable: '#panel, #top',
       shouldPan: ev => !R.nodeIdOf(ev.target),          /* палец по фону двигает схему */
+      canHold: ev => !!R.nodeIdOf(ev.target),           /* карточку — только после удержания */
+      onPress: ev => down(ev),
       onTap: () => select(null),
       onGesture: () => { drag = null; svg.classList.remove('panning'); }
     });
-    svg.addEventListener('pointerdown', ev => {
+    function down(ev) {
       if (ev.button > 1) return;
       /* двигать схему — средней кнопкой (палец по фону обрабатывает attachNavigation); левая — карточки и клик */
       const pan = ev.button === 1;
       const id = pan ? null : R.nodeIdOf(ev.target), t = id && R.idx.byId.get(id);
       if (ev.button === 1) ev.preventDefault();
       drag = { t, pan, sx: ev.clientX, sy: ev.clientY, ox: t ? t.x : d.view.x, oy: t ? t.y : d.view.y, moved: false };
-      svg.setPointerCapture(ev.pointerId); if (pan) svg.classList.add('panning');
-    });
+      try { svg.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
+      if (pan) svg.classList.add('panning');
+    }
+    svg.addEventListener('pointerdown', down);
     svg.addEventListener('pointermove', ev => {
       if (!drag) {
         const id = R.nodeIdOf(ev.target);

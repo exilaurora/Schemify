@@ -667,7 +667,7 @@
     if (nodeEl) { nodeEl.classList.add('linktarget'); if (rowEl) rowEl.classList.add('rowtarget'); }
   }
 
-  svg.addEventListener('pointerdown', ev => {
+  function pointerDown(ev) {
     if (ev.button === 2) return;
     commitInline();
     const ae = document.activeElement;
@@ -720,7 +720,8 @@
     }
     if (drag.type === 'pan' && !drag.noPan) svg.classList.add('panning');
     try { svg.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
-  });
+  }
+  svg.addEventListener('pointerdown', pointerDown);
 
   svg.addEventListener('pointermove', ev => {
     pointerWorld = R.toWorld(ev.clientX, ev.clientY); pointerInside = true;
@@ -808,20 +809,20 @@
   svg.addEventListener('pointercancel', ev => endDrag(ev, true));
   svg.addEventListener('pointerleave', () => { pointerInside = false; if (!drag && st.hovered) { st.hovered = null; if (!sel.size) R.refresh(); } });
   /* Сенсорный экран (мышь и тачпад не меняются): один палец по фону — панорама,
+     по карточке или заголовку группы: касание — выбрать/открыть, провести — панорама,
+     удержать и вести — перетаскивание (и связь от порта);
      два пальца в режиме правки — рамка выделения между пальцами, в просмотре — щипок.
      Масштаб одним пальцем: двойное касание, или двойное касание и тянуть вверх/вниз. */
   let lastPointerType = 'mouse', touchRect = null;
+  const isHoldTarget = t => !!R.nodeIdOf(t) || (mode === 'edit' && !!t.classList && t.classList.contains('gtitle'));
   /* регистрируется раньше attachNavigation, чтобы видеть и касания, которые она перехватывает */
   addEventListener('pointerdown', e => { lastPointerType = e.pointerType; }, true);
   R.attachNavigation({
     onStart: commitInline,
     onGesture: () => { if (drag) endDrag({ clientX: 0, clientY: 0 }, true); st.hovered = null; },
-    shouldPan: ev => {
-      const t = ev.target;
-      if (R.nodeIdOf(t)) return false;                                   /* карточка — перетаскивание */
-      if (mode === 'edit' && t.classList && t.classList.contains('gtitle')) return false;  /* двигать группу */
-      return true;
-    },
+    shouldPan: ev => !isHoldTarget(ev.target),
+    canHold: ev => isHoldTarget(ev.target),
+    onPress: pointerDown,
     onTap: () => { if (sel.size || groupsPanel) { groupsPanel = false; setSelection([]); } },
     twoFinger: () => (mode === 'edit' ? 'select' : 'zoom'),
     onRectStart: () => { touchRect = ERD.mk('rect', { class: 'marquee' }, R.ol); groupsPanel = false; },
