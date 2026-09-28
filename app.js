@@ -1166,7 +1166,7 @@
     const data = JSON.stringify(Model.toJSON(d)).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
     const code = ERDCoreFactory.toString().replace(/<\/(script)/gi, '<\\/$1').replace(/<!--/g, '<\\!--');
     return '<!doctype html>\n<html lang="ru">\n<head>\n<meta charset="utf-8">\n' +
-      '<meta name="viewport" content="width=device-width, initial-scale=1">\n<link rel="icon" href="data:,">\n' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">\n<link rel="icon" href="data:,">\n' +
       `<meta name="generator" content="Schemify">\n<title>${escHtml(d.name)} — ${escHtml(L.schemaSuffix)}</title>\n` +
       `<style>${ERD.CSS}</style>\n</head>\n<body>\n` +
       `<script type="application/json" id="erd-data">${data}</script>\n` +

@@ -405,7 +405,12 @@ JSON схемы:
   color-scheme:dark;
 }
 *{box-sizing:border-box}
-html{-webkit-tap-highlight-color:transparent}
+html{-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+/* страница целиком не масштабируется щипком и двойным касанием — только прокрутка;
+   холст (#svg, touch-action:none) обрабатывает жесты сам */
+*{touch-action:pan-x pan-y}
+/* iOS приближает страницу при фокусе поля со шрифтом < 16px */
+@media (pointer:coarse){input,select,textarea{font-size:16px!important}}
 /* без выделения текста и системного меню при двойном/долгом касании (телефоны) */
 #svg,#svg *,#top,#legend,button,.chip{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 #top input,#top textarea{-webkit-user-select:text;user-select:text}
@@ -929,17 +934,18 @@ button:hover{border-color:var(--muted)}
          На iOS эти события тоже приходят при щипке пальцами — там масштаб ведут pointer-события ниже. */
       const touches = new Map();
       let g0 = 1;
+      const np = { passive: false };
       addEventListener('gesturestart', ev => {
         ev.preventDefault();
         if (touches.size || !isFinite(ev.clientX)) return;
         if (o.onStart) o.onStart(); this._gestureScale = true; g0 = this.d.view.k;
-      });
+      }, np);
       addEventListener('gesturechange', ev => {
         ev.preventDefault();
         if (!this._gestureScale || touches.size || !isFinite(ev.clientX)) return;
         this.zoomAt(ev.clientX, ev.clientY, g0 * Math.pow(ev.scale, NAV.PINCH_TOUCH_POW));
-      });
-      addEventListener('gestureend', ev => { ev.preventDefault(); this._gestureScale = false; });
+      }, np);
+      addEventListener('gestureend', ev => { ev.preventDefault(); this._gestureScale = false; }, np);
 
       /* Сенсорный экран (мышь и тачпад не затрагиваются). Перехват на window в фазе capture —
          раньше обработчиков приложения в любом браузере.
