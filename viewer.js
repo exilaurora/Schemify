@@ -60,8 +60,8 @@ function ERDCoreFactory() {
     legendNotNull: 'связь FK (NOT NULL)',
     legendNull: 'FK допускает NULL',
     legendEnds: '● конец у FK-поля   ▏ конец у PK-поля',
-    legendHint: 'Наведи на таблицу — подсветятся связи · клик — детали · тяни карточки · колесо или щипок — зум · два пальца — перемещение',
-    legendEditHint: 'Двойной клик по фону — новая таблица · тяни ● у строки к таблице — FK · Shift+тяни — рамка выделения · два пальца — перемещение, щипок — зум',
+    legendHint: 'Наведи на таблицу — подсветятся связи · клик — детали · тяни карточки · колесо или щипок — зум · средняя кнопка или два пальца — перемещение',
+    legendEditHint: 'Двойной клик по фону — новая таблица · тяни ● у строки к таблице — FK · тяни по фону — рамка выделения · средняя кнопка или два пальца — перемещение, щипок — зум',
     canvasAria: 'Холст диаграммы',
 
     /* редактор: верхняя панель */
@@ -163,9 +163,9 @@ function ERDCoreFactory() {
     helpKeys: 'Горячие клавиши',
     helpAi: 'Нейросеть: импорт и экспорт схемы БД',
     controls: [
-      ['Двигать схему', 'тянуть фон мышью · два пальца по тачпаду · два пальца на экране · Shift+колесо — по горизонтали'],
+      ['Двигать схему', 'тянуть средней кнопкой мыши · два пальца по тачпаду · два пальца на экране · Shift+колесо — по горизонтали'],
       ['Масштаб', 'колесо мыши · щипок на тачпаде или экране · Ctrl+колесо'],
-      ['Выделить', 'клик по таблице · Shift/Ctrl+клик — добавить · Shift+тянуть по фону — рамка'],
+      ['Выделить', 'клик по таблице · тянуть левой кнопкой по фону — рамка · Shift/Ctrl+клик или Shift+рамка — добавить к выделению. В режиме «Просмотр» выделения нет: клик по таблице только показывает её детали'],
       ['Переместить', 'тянуть карточку (выделенные двигаются вместе) · тянуть заголовок группы — всю группу'],
       ['В группу', 'бросить таблицу на рамку другой группы или выбрать группу в панели справа'],
       ['Новая таблица', 'клавиша N (под курсором) · двойной клик по фону (внутри рамки группы — сразу в группу) · «+ Таблица»'],
@@ -181,7 +181,7 @@ function ERDCoreFactory() {
     keys: [
       ['Ctrl+Z', 'отменить'], ['Ctrl+Shift+Z, Ctrl+Y', 'повторить'],
       ['Ctrl+C / Ctrl+X / Ctrl+V', 'копировать / вырезать / вставить таблицы'],
-      ['N', 'новая таблица под курсором'], ['Ctrl+D', 'дублировать выделенное'], ['Ctrl+A', 'выделить все видимые'],
+      ['N', 'новая таблица под курсором'], ['Ctrl+D', 'дублировать выделенное'], ['Ctrl+A', 'выделить все видимые (в режиме правки)'],
       ['Delete, Backspace', 'удалить выделенное'], ['Ctrl+S', 'экспорт JSON'],
       ['Ctrl+F', 'поиск (Enter — следующее совпадение)'], ['F', 'схема по размеру окна'],
       ['Esc', 'снять выделение, отменить перетаскивание'], ['Enter / Esc', 'в поле ввода — применить / выйти'],
@@ -421,7 +421,7 @@ button:hover{border-color:var(--muted)}
 .chip i{width:9px;height:9px;border-radius:50%;background:var(--c)}
 .chip.off{opacity:.45}
 .chip.off i{background:transparent;border:1.5px solid var(--c)}
-#svg{position:fixed;inset:0;width:100%;height:100%;cursor:grab;touch-action:none;
+#svg{position:fixed;inset:0;width:100%;height:100%;cursor:default;touch-action:none;
   background-image:radial-gradient(var(--grid) 1.2px,transparent 1.2px);background-size:24px 24px}
 #svg.panning{cursor:grabbing}
 .gbox{fill:var(--c);fill-opacity:.07;stroke:var(--c);stroke-opacity:.35;stroke-width:1.2;stroke-dasharray:5 5}
@@ -1138,9 +1138,12 @@ button:hover{border-color:var(--muted)}
     R.attachNavigation({ scrollable: '#panel, #top', onGesture: () => { drag = null; svg.classList.remove('panning'); } });
     svg.addEventListener('pointerdown', ev => {
       if (ev.button > 1) return;
-      const id = R.nodeIdOf(ev.target), t = id && R.idx.byId.get(id);
-      drag = { t, sx: ev.clientX, sy: ev.clientY, ox: t ? t.x : d.view.x, oy: t ? t.y : d.view.y, moved: false };
-      svg.setPointerCapture(ev.pointerId); if (!t) svg.classList.add('panning');
+      /* двигать схему — средней кнопкой (и одним пальцем на сенсорном экране); левая — карточки и клик */
+      const pan = ev.button === 1 || (ev.pointerType === 'touch' && !R.nodeIdOf(ev.target));
+      const id = pan ? null : R.nodeIdOf(ev.target), t = id && R.idx.byId.get(id);
+      if (ev.button === 1) ev.preventDefault();
+      drag = { t, pan, sx: ev.clientX, sy: ev.clientY, ox: t ? t.x : d.view.x, oy: t ? t.y : d.view.y, moved: false };
+      svg.setPointerCapture(ev.pointerId); if (pan) svg.classList.add('panning');
     });
     svg.addEventListener('pointermove', ev => {
       if (!drag) {
@@ -1151,10 +1154,10 @@ button:hover{border-color:var(--muted)}
       const dx = ev.clientX - drag.sx, dy = ev.clientY - drag.sy;
       if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
       if (drag.t) { drag.t.x = drag.ox + dx / d.view.k; drag.t.y = drag.oy + dy / d.view.k; R.moveTables([drag.t.id]); }
-      else { d.view.x = drag.ox + dx; d.view.y = drag.oy + dy; R.applyView(); }
+      else if (drag.pan) { d.view.x = drag.ox + dx; d.view.y = drag.oy + dy; R.applyView(); }
     });
-    svg.addEventListener('pointerup', () => {
-      if (drag && !drag.moved) select(drag.t ? (st.selected.has(drag.t.id) ? null : drag.t.id) : null);
+    svg.addEventListener('pointerup', ev => {
+      if (drag && !drag.moved && !(drag.pan && ev.button === 1)) select(drag.t ? (st.selected.has(drag.t.id) ? null : drag.t.id) : null);
       drag = null; svg.classList.remove('panning');
     });
     svg.addEventListener('pointerleave', () => { if (!drag && st.hovered) { st.hovered = null; if (!st.selected.size) R.refresh(); } });

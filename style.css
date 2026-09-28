@@ -101,6 +101,7 @@ body.sb-open #sidebar{transform:none;visibility:visible}
 
 /* ---------- холст: элементы редактора ---------- */
 #svg:focus{outline:none}
+body.mode-view .node{cursor:pointer}
 .node .port{display:none}
 #svg.editing .node .port{display:inline;fill:var(--card);stroke:var(--fk);stroke-width:1.5;opacity:0;cursor:crosshair;transition:opacity .1s}
 #svg.editing .node:hover .port{opacity:.35}

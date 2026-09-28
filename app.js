@@ -341,7 +341,11 @@
     svg.classList.toggle('editing', m === 'edit');
     $('#m-view').setAttribute('aria-checked', String(m === 'view'));
     $('#m-edit').setAttribute('aria-checked', String(m === 'edit'));
-    if (m === 'view') groupsPanel = false;
+    if (m === 'view') {
+      groupsPanel = false;
+      /* в просмотре выделения нет — остаётся максимум одна таблица с деталями */
+      if (sel.size > 1) { sel.clear(); R.refresh(); }
+    }
     if (D) renderPanel();
   }
   function setSidebar(open) {
@@ -670,7 +674,7 @@
         path: ERD.mk('path', { class: 'tmp-link' }, R.ol)
       });
     } else if (id) {
-      if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
+      if (edit && (ev.shiftKey || ev.ctrlKey || ev.metaKey)) {
         sel.has(id) ? sel.delete(id) : sel.add(id);
         groupsPanel = false; R.refresh(); renderPanel();
         drag = Object.assign(base, { type: 'none' });
@@ -680,18 +684,24 @@
         const ids = [...sel].filter(x => { const t = byId(x); return t && R.isVisible(t); });
         drag = Object.assign(base, { type: 'move', id, ids, wasSel, start: new Map(ids.map(x => [x, { x: byId(x).x, y: byId(x).y }])) });
       } else {
-        drag = Object.assign(base, { type: 'pan', ox: D.view.x, oy: D.view.y, clickId: id });
+        /* просмотр: клик по таблице показывает детали, перетаскивание ничего не делает */
+        drag = Object.assign(base, { type: 'pan', ox: D.view.x, oy: D.view.y, clickId: id, noPan: true });
       }
     } else if (edit && tgt.classList.contains('gtitle')) {
       const gid = tgt.getAttribute('data-gid');
       const ids = D.tables.filter(t => t.group === gid && R.isVisible(t)).map(t => t.id);
       drag = Object.assign(base, { type: 'move', gid, id: ids[0], ids, group: true, start: new Map(ids.map(x => [x, { x: byId(x).x, y: byId(x).y }])) });
-    } else if (ev.shiftKey) {
-      drag = Object.assign(base, { type: 'marquee', w0: pointerWorld, rect: ERD.mk('rect', { class: 'marquee' }, R.ol), base: new Set(sel) });
+    } else if (edit) {
+      /* левая кнопка по фону — рамка выделения (с Shift — добавить к выделению) */
+      drag = Object.assign(base, {
+        type: 'marquee', w0: pointerWorld, rect: ERD.mk('rect', { class: 'marquee' }, R.ol),
+        base: new Set(ev.shiftKey ? sel : []), additive: ev.shiftKey
+      });
     } else {
-      drag = Object.assign(base, { type: 'pan', ox: D.view.x, oy: D.view.y });
+      /* просмотр: выделения нет; на сенсорном экране один палец двигает схему */
+      drag = Object.assign(base, { type: 'pan', ox: D.view.x, oy: D.view.y, noPan: ev.pointerType !== 'touch' });
     }
-    if (drag.type === 'pan') svg.classList.add('panning');
+    if (drag.type === 'pan' && !drag.noPan) svg.classList.add('panning');
     try { svg.setPointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
   });
 
@@ -706,7 +716,7 @@
     if (!drag.moved && Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
     if (!drag.moved) return;
     const d = drag, k = D.view.k;
-    if (d.type === 'pan') { D.view.x = d.ox + dx; D.view.y = d.oy + dy; R.applyView(); }
+    if (d.type === 'pan') { if (!d.noPan) { D.view.x = d.ox + dx; D.view.y = d.oy + dy; R.applyView(); } }
     else if (d.type === 'move' && d.ids.length) {
       if (!d.grects && !d.group) d.grects = R.groupBounds(new Set(d.ids));
       const s0 = d.start.get(d.id) || d.start.get(d.ids[0]);
@@ -763,7 +773,9 @@
         groupsPanel = true; sel.clear(); R.refresh(); renderPanel('g-' + d.gid + '-title');
       } else if (d.wasSel && sel.size > 1) setSelection([d.id]);
     } else if (d.type === 'marquee') {
-      d.rect.remove(); renderPanel();
+      d.rect.remove();
+      /* простой клик по фону снимает выделение */
+      if (!d.moved && !d.additive) { groupsPanel = false; setSelection([]); } else renderPanel();
     } else if (d.type === 'link') {
       d.path.remove(); setLinkTarget(null);
       if (d.moved && !cancelled) finishLink(d, ev);
@@ -864,7 +876,7 @@
     } else if (tgt.classList.contains('gbox') || tgt.classList.contains('gtitle')) {
       const gid = tgt.getAttribute('data-gid');
       if (edit) add(L.cmAddTableToGroup, () => addTable(p, gid), 'N');
-      add(L.cmSelectGroup, () => setSelection(D.tables.filter(t => t.group === gid && R.isVisible(t)).map(t => t.id)));
+      if (edit) add(L.cmSelectGroup, () => setSelection(D.tables.filter(t => t.group === gid && R.isVisible(t)).map(t => t.id)));
       if (edit) {
         add(L.cmRenameGroup, () => renameGroupInline(gid));
         add(L.cmGroupSettings, () => { sel.clear(); groupsPanel = true; R.refresh(); renderPanel('g-' + gid + '-title'); });
@@ -878,7 +890,7 @@
         add(L.cmPasteJson, openPasteJson);
         sep();
       }
-      add(L.cmSelectAll, selectAll, 'Ctrl+A');
+      if (edit) add(L.cmSelectAll, selectAll, 'Ctrl+A');
       add(L.cmFit, fitView, 'F');
       if (edit) {
         add(L.cmAutoLayout, doAutoLayout);
@@ -1465,7 +1477,7 @@
         case 'KeyD': e.preventDefault(); duplicateSelected(); return;
         case 'KeyS': e.preventDefault(); exportJson(); return;
         case 'KeyF': e.preventDefault(); $('#q').focus(); $('#q').select(); return;
-        case 'KeyA': e.preventDefault(); selectAll(); return;
+        case 'KeyA': e.preventDefault(); if (mode === 'edit') selectAll(); return;
       }
       return;
     }
