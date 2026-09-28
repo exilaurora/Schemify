@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ER-редактор</title>
+<link rel="icon" href="data:,">
+<!-- viewer.js подключается в <head>: он внедряет базовый CSS тем/диаграммы и сразу применяет тему (без мигания) -->
+<script src="viewer.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="mode-edit">
+
+<div id="top">
+  <button id="sb-toggle" type="button" class="icon" data-i18n-aria="toggleSidebar" aria-controls="sidebar" aria-expanded="false">☰</button>
+  <div class="title">
+    <input id="dname" class="dname" type="text" data-i18n-aria="diagramName" spellcheck="false" autocomplete="off">
+    <span id="save-state" class="save-state" role="status" aria-live="polite"></span>
+  </div>
+  <div class="seg" role="radiogroup" data-i18n-aria="modeAria">
+    <button id="m-view" type="button" role="radio" aria-checked="false" data-i18n="modeView"></button>
+    <button id="m-edit" type="button" role="radio" aria-checked="true" data-i18n="modeEdit"></button>
+  </div>
+  <input id="q" type="search" data-i18n-ph="searchPh" data-i18n-aria="search" autocomplete="off">
+  <div class="grp edit-only">
+    <button id="b-add-table" type="button" data-i18n="addTable" data-i18n-title="addTableAria"></button>
+    <button id="b-groups" type="button" data-i18n="groupsBtn"></button>
+  </div>
+  <div class="grp edit-only">
+    <button id="b-undo" type="button" class="icon" data-i18n-aria="undo">↶</button>
+    <button id="b-redo" type="button" class="icon" data-i18n-aria="redo">↷</button>
+  </div>
+  <button id="fit" type="button" data-i18n="fit" title="F"></button>
+  <button id="b-layout" type="button" class="edit-only" data-i18n="autoLayout"></button>
+  <button id="b-snap" type="button" class="edit-only toggle icon" aria-pressed="false" data-i18n-aria="snapAria">⌗</button>
+  <div class="menu-wrap">
+    <button id="b-file" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="file-menu"><span data-i18n="fileMenu"></span> ▾</button>
+    <div id="file-menu" class="menu" role="menu" hidden></div>
+  </div>
+  <button id="theme" type="button" class="icon" data-i18n-aria="themeAria">◐</button>
+  <div class="row2"><div id="chips"></div><span id="stats" aria-live="polite"></span></div>
+</div>
+
+<aside id="sidebar" data-i18n-aria="diagrams">
+  <div class="sb-head">
+    <h2 data-i18n="diagrams"></h2>
+    <button id="sb-new" type="button" data-i18n="newDiagram"></button>
+  </div>
+  <ul id="dlist"></ul>
+  <div class="sb-foot">
+    <button id="sb-import" type="button" data-i18n="importBtn"></button>
+    <button id="sb-export-all" type="button" data-i18n="exportAllBtn"></button>
+    <button id="sb-sample" type="button" data-i18n="sampleBtn"></button>
+  </div>
+</aside>
+
+<svg id="svg" data-i18n-aria="canvasAria" role="application"></svg>
+
+<div id="empty" hidden></div>
+
+<div id="panel" role="complementary">
+  <button id="close" type="button" data-i18n-aria="close">✕</button>
+  <div id="pc"></div>
+</div>
+
+<div id="legend"></div>
+
+<div id="minimap" hidden>
+  <canvas data-i18n-aria="minimapAria"></canvas>
+  <button type="button" class="mm-close" data-i18n-aria="close">✕</button>
+</div>
+<button id="mm-show" type="button" hidden data-i18n="minimap"></button>
+
+<div id="toasts" aria-live="polite"></div>
+<div id="drop" hidden data-i18n="dropHint"></div>
+<input id="file" type="file" accept=".json,.html,.htm,application/json,text/html" hidden>
+<datalist id="pg-types"></datalist>
+
+<script src="model.js"></script>
+<script src="storage.js"></script>
+<script src="samples.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

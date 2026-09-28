@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>netwatch — схема БД</title>
+<style>
+:root{
+  --bg:#f4f5f7; --panel:#ffffff; --card:#ffffff; --card-line:#d5d9e0; --text:#1c2230; --muted:#7a8394;
+  --edge:#8b93a3; --grid:#e3e6eb; --shadow:0 2px 10px rgba(20,30,50,.10);
+  --c-ref:#6f7f9c; --c-infra:#2f7dd1; --c-devices:#1f9d7a; --c-traffic:#d98a1c;
+  --c-ssh:#d0473f; --c-rules:#8a5cd6; --c-incidents:#c2497d; --c-users:#5f8f2f;
+}
+[data-theme=dark]{
+  --bg:#12151c; --panel:#1b2029; --card:#1e2430; --card-line:#333c4d; --text:#e6e9ef; --muted:#8b95a8;
+  --edge:#6c768a; --grid:#1b2029; --shadow:0 2px 14px rgba(0,0,0,.5);
+  --c-ref:#8395b6; --c-infra:#4a97ec; --c-devices:#35b895; --c-traffic:#eba33a;
+  --c-ssh:#ee6a61; --c-rules:#a683ef; --c-incidents:#e0679c; --c-users:#82b552;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+#top{position:fixed;left:0;right:0;top:0;z-index:5;display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--card-line);box-shadow:var(--shadow)}
+#top h1{font-size:15px;margin:0 6px 0 0;font-weight:650;white-space:nowrap}
+#top h1 small{font-weight:400;color:var(--muted);margin-left:6px}
+input[type=search]{background:var(--bg);color:var(--text);border:1px solid var(--card-line);border-radius:8px;
+  padding:6px 10px;font-size:13px;width:190px;outline:none}
+input[type=search]:focus{border-color:var(--c-infra)}
+button{background:var(--bg);color:var(--text);border:1px solid var(--card-line);border-radius:8px;
+  padding:6px 10px;font-size:13px;cursor:pointer}
+button:hover{border-color:var(--muted)}
+#chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;cursor:pointer;
+  border:1px solid var(--card-line);background:var(--bg);user-select:none}
+.chip i{width:9px;height:9px;border-radius:50%;background:var(--c)}
+.chip.off{opacity:.45}
+.chip.off i{background:transparent;border:1.5px solid var(--c)}
+#svg{position:fixed;inset:0;width:100%;height:100%;cursor:grab;touch-action:none;
+  background-image:radial-gradient(var(--grid) 1.2px,transparent 1.2px);background-size:24px 24px}
+#svg.panning{cursor:grabbing}
+.gbox{fill:var(--c);fill-opacity:.07;stroke:var(--c);stroke-opacity:.35;stroke-width:1.2;stroke-dasharray:5 5}
+.gtitle{fill:var(--c);font-size:15px;font-weight:700;letter-spacing:.3px}
+.node{cursor:move;transition:opacity .15s}
+.node .body{fill:var(--card);stroke:var(--card-line);stroke-width:1}
+.node .head{fill:var(--c)}
+.node.sel .body{stroke:var(--c);stroke-width:2.5}
+.node .tname{fill:#fff;font:600 13px ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace}
+.node .pbadge{fill:#fff;fill-opacity:.9;font:700 8.5px system-ui,sans-serif}
+.node .pbg{fill:#fff;fill-opacity:.22}
+.node .cn{fill:var(--text);font:11.5px ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace}
+.node .cn.fkc{fill:var(--c-infra)}
+.node .ct{fill:var(--muted);font:10px ui-monospace,Menlo,Consolas,monospace;text-anchor:end}
+.node .flag{font:700 8px system-ui,sans-serif;fill:var(--muted)}
+.node .flag.pk{fill:var(--c-traffic)}
+.node .flag.fk{fill:var(--c-infra)}
+.node .foot{fill:var(--muted);font:italic 10px ui-monospace,Menlo,Consolas,monospace}
+.node .rowhl{fill:var(--c);fill-opacity:.0}
+.node .row:hover .rowhl{fill-opacity:.1}
+.node.dim,.gbox.dim,.gtitle.dim{opacity:.16}
+.node.match .body{stroke:var(--c-traffic);stroke-width:2.5}
+.edge{fill:none;stroke:var(--edge);stroke-width:1.3;stroke-opacity:.55;transition:opacity .15s}
+.edge.nl{stroke-dasharray:3 4}
+.edge.hl{stroke:var(--c);stroke-opacity:1;stroke-width:2.2;stroke-dasharray:7 5;animation:flow .7s linear infinite}
+.edge.dim{stroke-opacity:.06}
+.emark{fill:var(--edge);fill-opacity:.7}
+.emark.hl{fill:var(--c);fill-opacity:1}
+.emark.dim{fill-opacity:.06}
+.hit{fill:none;stroke:transparent;stroke-width:12;pointer-events:stroke}
+@keyframes flow{to{stroke-dashoffset:-24}}
+#panel{position:fixed;right:12px;top:calc(var(--th,56px) + 10px);bottom:12px;width:330px;z-index:4;background:var(--panel);
+  border:1px solid var(--card-line);border-radius:12px;box-shadow:var(--shadow);overflow:auto;padding:14px 16px;
+  transform:translateX(calc(100% + 20px));transition:transform .2s}
+#panel.open{transform:none}
+#panel h2{margin:0 0 2px;font:650 16px ui-monospace,Menlo,Consolas,monospace}
+#panel .g{font-size:12px;color:var(--c);font-weight:600;margin-bottom:8px}
+#panel p{font-size:13px;line-height:1.45;margin:6px 0 10px}
+#panel h3{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:14px 0 6px}
+#panel table{width:100%;border-collapse:collapse;font:11.5px ui-monospace,Menlo,Consolas,monospace}
+#panel td{padding:3px 4px;border-bottom:1px solid var(--card-line)}
+#panel td:last-child{color:var(--muted);text-align:right}
+#panel .lnk{display:block;padding:4px 0;font:12px ui-monospace,Menlo,Consolas,monospace;color:var(--c-infra);cursor:pointer}
+#panel .lnk:hover{text-decoration:underline}
+#panel .lnk span{color:var(--muted)}
+#close{position:absolute;right:8px;top:8px;padding:2px 8px}
+#legend{position:fixed;left:12px;bottom:12px;z-index:3;background:var(--panel);border:1px solid var(--card-line);
+  border-radius:10px;padding:8px 12px;font-size:11.5px;color:var(--muted);line-height:1.7;box-shadow:var(--shadow)}
+#legend b{color:var(--text);font-weight:600}
+.ls{display:inline-block;width:26px;vertical-align:middle;border-top:2px solid var(--edge);margin-right:6px}
+.ls.d{border-top-style:dotted}
+#stats{color:var(--muted);font-size:12px;margin-left:auto}
+@media(max-width:800px){
+  #panel{top:auto;left:8px;right:8px;width:auto;bottom:8px;height:46%;transform:translateY(calc(100% + 20px))}
+  #legend{display:none} input[type=search]{width:130px}
+}
+</style>
+</head>
+<body>
+<div id="top">
+  <h1>netwatch<small>схема БД (PostgreSQL)</small></h1>
+  <input id="q" type="search" placeholder="Поиск таблицы или поля…">
+  <div id="chips"></div>
+  <button id="fit">По размеру</button>
+  <button id="reset">Сбросить раскладку</button>
+  <button id="theme">Тема</button>
+  <span id="stats"></span>
+</div>
+
+<svg id="svg"><g id="vp"><g id="gl"></g><g id="el"></g><g id="nl"></g></g></svg>
+
+<div id="panel"><button id="close">✕</button><div id="pc"></div></div>
+
+<div id="legend">
+  <b>Как читать</b><br>
+  <span class="ls"></span>связь FK (NOT NULL) &nbsp; <span class="ls d"></span>FK допускает NULL<br>
+  ● конец у FK-поля &nbsp; ▏ конец у PK-поля<br>
+  Наведи на таблицу — подсветятся связи · клик — детали · тяни карточки · колесо — зум
+</div>
+
+<script>
+/* ---------- ДАННЫЕ ---------- */
+const GROUPS={
+  ref:{title:'Справочники'}, infra:{title:'Инфраструктура'}, devices:{title:'Устройства'},
+  traffic:{title:'События Wi-Fi и трафик'}, ssh:{title:'SSH'}, rules:{title:'Правила автоподтверждения'},
+  incidents:{title:'Инциденты'}, users:{title:'Пользователи'}
+};
+const tables=[];
+/* столбец: [имя, тип, флаги ('pk','uq','null'), ссылка 'table' или 'table.col'] */
+function T(name,group,desc,cols,o={}){
+  tables.push({name,group,desc,uq:o.uq||'',part:!!o.part,
+    cols:cols.map(c=>({n:c[0],t:c[1],f:c[2]||'',r:c[3]||null}))});
+}
+const ID=['id','bigint','pk'], SID=['id','smallint','pk'];
+
+/* Справочники */
+T('event_type','ref','Коды событий протокола.',[SID,['code','text','uq'],['description','text']]);
+T('auth_method','ref','Метод аутентификации: password, blank password, pubkey.',[SID,['code','text','uq']]);
+T('approval_result','ref','Результат подтверждения: allowed, denied, timeout, server_unavailable.',[SID,['code','text','uq']]);
+T('auth_fail_reason','ref','Причина неудачного входа: bad_password, password_too_long, unknown_user, wrong_user, bad_signature.',[SID,['code','text','uq']]);
+T('severity','ref','Справочник важности инцидентов.',[SID,['code','text','uq']]);
+T('incident_status','ref','Справочник статусов инцидентов.',[SID,['code','text','uq']]);
+
+/* Инфраструктура */
+T('location','infra','Где стоит роутер (дом, офис).',[['id','int','pk'],['name','text']]);
+T('router','infra','Роутер.',[['id','int','pk'],['location_id','int','','location'],['name','text','uq'],['is_active','bool']]);
+T('router_run','infra','Запуск netwatch на роутере.',[ID,['router_id','int','','router'],['version','text'],['started_at','tstz']],{uq:'UNIQUE(router_id, started_at)'});
+T('router_connection','infra','TCP-сессия роутера с сервером.',[ID,['run_id','bigint','','router_run'],['remote_ip','inet'],['connected_at','tstz'],['disconnected_at','tstz','null'],['reason','text','null']]);
+T('wireless_network','infra','Беспроводная сеть (SSID) роутера.',[['id','int','pk'],['router_id','int','','router'],['ssid','text']],{uq:'UNIQUE(router_id, ssid)'});
+T('wifi_interface','infra','Wi-Fi интерфейс роутера (phy0-ap0).',[['id','int','pk'],['router_id','int','','router'],['network_id','int','','wireless_network'],['name','text']],{uq:'UNIQUE(router_id, name)'});
+
+/* Устройства */
+T('person','devices','Владелец устройств и SSH-ключей.',[['id','int','pk'],['name','text']]);
+T('device','devices','Клиентское устройство, идентифицируется MAC-адресом.',[ID,['mac','macaddr','uq'],['owner_id','int','null','person'],['trust_status','text'],['note','text','null']]);
+T('device_group','devices','Группа устройств.',[['id','int','pk'],['name','text']]);
+T('device_group_member','devices','Связь M:N: устройство ↔ группа.',[['group_id','int','pk','device_group'],['device_id','bigint','pk','device']]);
+T('hostname_observation','devices','История имён устройства.',[ID,['device_id','bigint','','device'],['hostname','text'],['first_seen','tstz'],['last_seen','tstz']]);
+T('ip_observation','devices','История IP-адресов устройства.',[ID,['device_id','bigint','','device'],['router_id','int','','router'],['ip','inet'],['first_seen','tstz'],['last_seen','tstz']]);
+
+/* События Wi-Fi и трафик */
+T('raw_event','traffic','Сырые события протокола. Партиции по месяцам.',[ID,['run_id','bigint','','router_run'],['event_type_id','smallint','','event_type'],['router_ts','tstz'],['received_at','tstz'],['payload','jsonb']],{part:true});
+T('wifi_session','traffic','Wi-Fi сессия клиента. wifi_connected открывает, wifi_device дописывает имя и IP, wifi_disconnected закрывает. При перезапуске роутера открытые сессии закрываются временем последнего router_stats. Партиции по месяцам.',
+  [ID,['device_id','bigint','','device'],['interface_id','int','','wifi_interface'],['connected_at','tstz'],['disconnected_at','tstz','null'],['hostname_observation_id','bigint','null','hostname_observation'],['ip','inet','null'],['signal_dbm','int','null'],['waited_ms','int','null']],{part:true});
+T('traffic_sample','traffic','Замер трафика роутера, раз в минуту.',[ID,['router_id','int','','router'],['period_start','tstz'],['period_end','tstz'],['down_bytes','bigint'],['up_bytes','bigint']]);
+T('client_traffic','traffic','Трафик клиента за замер. Партиции по месяцам.',[ID,['sample_id','bigint','','traffic_sample'],['device_id','bigint','null','device'],['down_bytes','bigint'],['up_bytes','bigint'],['down_packets','bigint'],['up_packets','bigint']],{part:true});
+T('client_traffic_ip','traffic','Какие адреса дали трафик.',[['client_traffic_id','bigint','pk','client_traffic'],['ip','inet','pk']]);
+T('router_metric','traffic','Метрики роутера.',[ID,['router_id','int','','router'],['at','tstz'],['uptime','interval'],['load1','real'],['load5','real'],['load15','real'],['mem_total_kb','bigint'],['mem_available_kb','bigint']]);
+T('interface_load','traffic','Нагрузка на интерфейс (число станций).',[['metric_id','bigint','pk','router_metric'],['interface_id','int','pk','wifi_interface'],['stations','int']]);
+
+/* SSH */
+T('ssh_account','ssh','Учётная запись на роутере.',[['id','int','pk'],['router_id','int','','router'],['username','text']],{uq:'UNIQUE(router_id, username)'});
+T('ssh_key','ssh','Публичный SSH-ключ.',[['id','int','pk'],['fingerprint','text','uq'],['key_type','text'],['person_id','int','null','person'],['label','text','null']]);
+T('ssh_session','ssh','SSH-сессия на роутере.',[ID,['run_id','bigint','','router_run'],['session_no','int'],['pid','int'],['account_id','int','','ssh_account'],['client_ip','inet'],['client_port','int'],['auth_method_id','smallint','','auth_method'],['key_id','int','null','ssh_key'],['started_at','tstz'],['ended_at','tstz','null'],['end_reason','text','null']],{uq:'UNIQUE(run_id, session_no)'});
+T('ssh_approval','ssh','Подтверждение входа: решение человека или правила.',[ID,['session_id','bigint','uq','ssh_session'],['requested_at','tstz'],['decided_at','tstz','null'],['result_id','smallint','','approval_result'],['decided_by_user','int','null','app_user'],['decided_by_rule','int','null','approval_rule'],['reason','text','null'],['killed','bool']]);
+T('ssh_auth_failure','ssh','Неудачная попытка входа.',[ID,['router_id','int','','router'],['account_id','int','null','ssh_account'],['client_ip','inet'],['client_port','int'],['reason_id','smallint','','auth_fail_reason'],['pid','int'],['at','tstz']]);
+T('ip_ban','ssh','Бан IP-адреса.',[ID,['ip','inet'],['router_id','int','null','router'],['from','tstz'],['until','tstz','null'],['reason','text','null'],['created_by_rule','int','null','approval_rule']]);
+
+/* Правила */
+T('approval_rule','rules','Правило автоподтверждения. router_id = NULL — для всех роутеров. Условия вынесены в отдельные типизированные таблицы (нормализация).',[['id','int','pk'],['name','text'],['priority','int'],['action','text'],['router_id','int','null','router'],['time_from','time','null'],['time_to','time','null'],['enabled','bool']]);
+T('rule_subnet','rules','Подсети, к которым применяется правило.',[ID,['rule_id','int','','approval_rule'],['net','cidr']]);
+T('rule_account','rules','Учётные записи, к которым применяется правило.',[ID,['rule_id','int','','approval_rule'],['username','text']]);
+T('rule_key','rules','SSH-ключи, к которым применяется правило.',[ID,['rule_id','int','','approval_rule'],['key_id','int','','ssh_key']]);
+
+/* Инциденты и пользователи */
+T('alert_rule','incidents','Правило генерации инцидентов.',[['id','int','pk'],['event_type_id','smallint','','event_type'],['severity_id','smallint','','severity'],['threshold','int'],['window','interval'],['enabled','bool']]);
+T('incident','incidents','Инцидент.',[ID,['alert_rule_id','int','','alert_rule'],['status_id','smallint','','incident_status'],['router_id','int','','router'],['device_id','bigint','null','device'],['ssh_session_id','bigint','null','ssh_session'],['assignee_id','int','null','app_user'],['opened_at','tstz'],['closed_at','tstz','null']]);
+T('incident_comment','incidents','Комментарий к инциденту.',[ID,['incident_id','bigint','','incident'],['user_id','int','','app_user'],['text','text'],['created_at','tstz']]);
+T('notification_channel','incidents','Канал уведомлений пользователя.',[['id','int','pk'],['user_id','int','','app_user'],['kind','text'],['address','text']]);
+T('notification','incidents','Журнал отправленных уведомлений.',[ID,['channel_id','int','','notification_channel'],['incident_id','bigint','null','incident'],['sent_at','tstz'],['status','text']]);
+T('app_user','users','Пользователь веб-интерфейса.',[['id','int','pk'],['login','text','uq'],['password_hash','text'],['role_id','smallint','','role']]);
+T('role','users','Роль пользователя.',[SID,['name','text','uq']]);
+T('user_router_access','users','Какие роутеры видит пользователь. Связь M:N.',[['user_id','int','pk','app_user'],['router_id','int','pk','router']]);
+
+/* ---------- ПОДГОТОВКА ---------- */
+const W=300,HEAD=30,ROW=21,GAP=26,GPAD=20,GHEAD=46;
+const byName={}; tables.forEach(t=>{byName[t.name]=t; t.h=HEAD+t.cols.length*ROW+(t.uq?20:6);});
+const edges=[];
+tables.forEach(t=>t.cols.forEach((c,i)=>{
+  if(!c.r) return;
+  const [tn,cn]=c.r.split('.'); const tt=byName[tn];
+  const ti=cn?tt.cols.findIndex(x=>x.n===cn):tt.cols.findIndex(x=>x.f.includes('pk'));
+  edges.push({from:t,fi:i,to:tt,ti,nullable:c.f.includes('null')});
+}));
+const neigh={}; tables.forEach(t=>neigh[t.name]=new Set());
+edges.forEach(e=>{neigh[e.from.name].add(e.to.name);neigh[e.to.name].add(e.from.name);});
+
+/* ---------- РАСКЛАДКА ---------- */
+function layout(){
+  const rows=[['infra','devices','ref'],['traffic','ssh'],['rules','incidents','users']];
+  const ncols={infra:2,devices:2,ref:2,traffic:3,ssh:2,rules:2,incidents:2,users:1};
+  let y=0;
+  rows.forEach(r=>{
+    let x=0,bottom=y;
+    r.forEach(g=>{
+      const n=ncols[g], colY=Array(n).fill(y+GHEAD);
+      tables.filter(t=>t.group===g).forEach(t=>{
+        const ci=colY.indexOf(Math.min(...colY));
+        t.x=x+GPAD+ci*(W+GAP); t.y=colY[ci]; colY[ci]+=t.h+GAP;
+      });
+      x+=n*(W+GAP)-GAP+GPAD*2+50; bottom=Math.max(bottom,...colY);
+    });
+    y=bottom+30;
+  });
+}
+
+/* ---------- ОТРИСОВКА ---------- */
+const NS='http://www.w3.org/2000/svg';
+const $=s=>document.querySelector(s);
+const svg=$('#svg'), vp=$('#vp'), gl=$('#gl'), el=$('#el'), nl=$('#nl');
+function mk(tag,attrs={},parent){const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);if(parent)parent.appendChild(e);return e;}
+const colorVar=g=>`var(--c-${g})`;
+
+const hidden=new Set(); let selected=null, hovered=null, query='';
+
+tables.forEach(t=>{
+  const g=mk('g',{class:'node'},nl); g.style.setProperty('--c',colorVar(t.group)); t.el=g;
+  mk('rect',{class:'body',width:W,height:t.h,rx:8},g);
+  mk('path',{class:'head',d:`M0 8a8 8 0 0 1 8-8h${W-16}a8 8 0 0 1 8 8v${HEAD-8}H0z`},g);
+  const tn=mk('text',{class:'tname',x:12,y:20},g); tn.textContent=t.name;
+  if(t.part){
+    mk('rect',{class:'pbg',x:W-92,y:8,width:82,height:15,rx:7},g);
+    const pb=mk('text',{class:'pbadge',x:W-51,y:19,'text-anchor':'middle'},g); pb.textContent='PARTITIONED';
+  }
+  t.cols.forEach((c,i)=>{
+    const ry=HEAD+i*ROW; const r=mk('g',{class:'row'},g);
+    mk('rect',{class:'rowhl',x:1,y:ry,width:W-2,height:ROW},r);
+    const flags=[]; if(c.f.includes('pk'))flags.push('PK'); if(c.r)flags.push('FK'); if(c.f.includes('uq'))flags.push('UQ');
+    const ft=mk('text',{class:'flag '+(flags[0]==='PK'?'pk':flags[0]==='FK'?'fk':''),x:8,y:ry+14},r); ft.textContent=flags.join('·');
+    const nm=mk('text',{class:'cn'+(c.r?' fkc':''),x:50,y:ry+14.5},r); nm.textContent=c.n+(c.f.includes('null')?'?':'');
+    const ty=mk('text',{class:'ct',x:W-10,y:ry+14},r); ty.textContent=c.t;
+  });
+  if(t.uq){const f=mk('text',{class:'foot',x:10,y:t.h-7},g); f.textContent=t.uq;}
+  t.g=g;
+});
+
+const gEls={};
+Object.keys(GROUPS).forEach(k=>{
+  const r=mk('rect',{class:'gbox',rx:16},gl); r.style.setProperty('--c',colorVar(k));
+  const tx=mk('text',{class:'gtitle'},gl); tx.style.setProperty('--c',colorVar(k)); tx.textContent=GROUPS[k].title;
+  gEls[k]={r,tx};
+});
+edges.forEach(e=>{
+  e.path=mk('path',{class:'edge'+(e.nullable?' nl':'')},el);
+  e.hit=mk('path',{class:'hit'},el);
+  e.m1=mk('circle',{class:'emark',r:3.6},el);
+  e.m2=mk('rect',{class:'emark',width:2.4,height:11,y:-5.5,rx:1},el);
+  const tt=mk('title',{},e.hit); tt.textContent=`${e.from.name}.${e.from.cols[e.fi].n} → ${e.to.name}.${e.to.cols[e.ti].n}`+(e.nullable?'  (NULL допускается)':'');
+  e.path.style.setProperty('--c',colorVar(e.to.group)); e.m1.style.setProperty('--c',colorVar(e.to.group)); e.m2.style.setProperty('--c',colorVar(e.to.group));
+});
+
+function place(t){t.g.setAttribute('transform',`translate(${t.x},${t.y})`);}
+function geom(e){
+  const y1=e.from.y+HEAD+e.fi*ROW+ROW/2, y2=e.to.y+HEAD+e.ti*ROW+ROW/2;
+  const fl=e.from.x, fr=fl+W, tl=e.to.x, tr=tl+W; let s1,s2;
+  if(fr+12<=tl){s1=1;s2=-1}else if(tr+12<=fl){s1=-1;s2=1}else{s1=1;s2=1}
+  const x1=s1>0?fr:fl, x2=s2>0?tr:tl;
+  const d=s1===s2?55+Math.abs(y1-y2)*.12:Math.max(50,Math.abs(x2-x1)/2);
+  return {x1,y1,x2,y2,d:`M${x1} ${y1}C${x1+s1*d} ${y1},${x2+s2*d} ${y2},${x2} ${y2}`};
+}
+function drawEdges(){
+  edges.forEach(e=>{
+    const g=geom(e); e.path.setAttribute('d',g.d); e.hit.setAttribute('d',g.d);
+    e.m1.setAttribute('cx',g.x1); e.m1.setAttribute('cy',g.y1);
+    e.m2.setAttribute('x',g.x2-1.2); e.m2.setAttribute('y',g.y2-5.5);
+  });
+}
+function drawGroups(){
+  Object.keys(GROUPS).forEach(k=>{
+    const ts=tables.filter(t=>t.group===k&&!hidden.has(k)); const {r,tx}=gEls[k];
+    if(!ts.length){r.style.display=tx.style.display='none';return;}
+    r.style.display=tx.style.display='';
+    const x0=Math.min(...ts.map(t=>t.x))-GPAD, y0=Math.min(...ts.map(t=>t.y))-GHEAD;
+    const x1=Math.max(...ts.map(t=>t.x+W))+GPAD, y1=Math.max(...ts.map(t=>t.y+t.h))+GPAD;
+    r.setAttribute('x',x0);r.setAttribute('y',y0);r.setAttribute('width',x1-x0);r.setAttribute('height',y1-y0);
+    tx.setAttribute('x',x0+16);tx.setAttribute('y',y0+28);
+  });
+}
+function redraw(){tables.forEach(place);drawEdges();drawGroups();}
+
+/* ---------- ПОДСВЕТКА ---------- */
+function refresh(){
+  const focus=selected||hovered; const q=query.trim().toLowerCase();
+  const matches=new Set();
+  if(q) tables.forEach(t=>{ if(t.name.includes(q)||t.cols.some(c=>c.n.includes(q))) matches.add(t.name); });
+  tables.forEach(t=>{
+    const vis=!hidden.has(t.group); t.g.style.display=vis?'':'none';
+    let dim=false;
+    if(focus) dim=!(t.name===focus||neigh[focus].has(t.name));
+    else if(q) dim=!matches.has(t.name);
+    t.g.classList.toggle('dim',dim);
+    t.g.classList.toggle('sel',t.name===selected);
+    t.g.classList.toggle('match',!!q&&matches.has(t.name));
+  });
+  Object.keys(GROUPS).forEach(k=>{
+    const inFocus=focus&&tables.some(t=>t.group===k&&(t.name===focus||neigh[focus].has(t.name)));
+    const d=focus&&!inFocus;
+    gEls[k].r.classList.toggle('dim',!!d); gEls[k].tx.classList.toggle('dim',!!d);
+  });
+  edges.forEach(e=>{
+    const vis=!hidden.has(e.from.group)&&!hidden.has(e.to.group);
+    [e.path,e.hit,e.m1,e.m2].forEach(x=>x.style.display=vis?'':'none');
+    const rel=focus&&(e.from.name===focus||e.to.name===focus);
+    [e.path,e.m1,e.m2].forEach(x=>{x.classList.toggle('hl',!!rel);x.classList.toggle('dim',!!focus&&!rel);});
+  });
+  const vt=tables.filter(t=>!hidden.has(t.group)).length;
+  const ve=edges.filter(e=>!hidden.has(e.from.group)&&!hidden.has(e.to.group)).length;
+  $('#stats').textContent=`${vt} таблиц · ${ve} связей`;
+}
+
+/* ---------- ПАНЕЛЬ ---------- */
+function showPanel(t){
+  const out=edges.filter(e=>e.from===t), inn=edges.filter(e=>e.to===t);
+  const link=(n,txt)=>`<a class="lnk" data-t="${n}">${n} <span>${txt}</span></a>`;
+  $('#pc').innerHTML=`
+    <h2>${t.name}</h2><div class="g" style="--c:${colorVar(t.group)}">${GROUPS[t.group].title}${t.part?' · партиции по месяцам':''}</div>
+    <p>${t.desc}</p>
+    <h3>Столбцы</h3>
+    <table>${t.cols.map(c=>{const fl=[c.f.includes('pk')&&'PK',c.r&&'FK',c.f.includes('uq')&&'UQ',c.f.includes('null')&&'NULL'].filter(Boolean).join(' ');
+      return `<tr><td>${c.n}</td><td>${c.t}</td><td>${fl}</td></tr>`}).join('')}</table>
+    ${t.uq?`<p style="font:11.5px ui-monospace,monospace;color:var(--muted)">${t.uq}</p>`:''}
+    ${out.length?`<h3>Ссылается на (${out.length})</h3>${out.map(e=>link(e.to.name,'← '+e.from.cols[e.fi].n)).join('')}`:''}
+    ${inn.length?`<h3>На неё ссылаются (${inn.length})</h3>${inn.map(e=>link(e.from.name,'→ '+e.from.cols[e.fi].n)).join('')}`:''}`;
+  $('#panel').classList.add('open');
+  $('#pc').querySelectorAll('.lnk').forEach(a=>a.onclick=()=>{select(a.dataset.t);centerOn(byName[a.dataset.t]);});
+}
+function select(name){selected=name;refresh();if(name)showPanel(byName[name]);else $('#panel').classList.remove('open');}
+$('#close').onclick=()=>select(null);
+
+/* ---------- ЗУМ / ПАН / ДРАГ ---------- */
+let view={x:0,y:0,k:1};
+const applyView=()=>vp.setAttribute('transform',`translate(${view.x},${view.y}) scale(${view.k})`);
+function fit(){
+  const ts=tables.filter(t=>!hidden.has(t.group)); if(!ts.length)return;
+  const x0=Math.min(...ts.map(t=>t.x))-GPAD-10,y0=Math.min(...ts.map(t=>t.y))-GHEAD-10;
+  const x1=Math.max(...ts.map(t=>t.x+W))+GPAD+10,y1=Math.max(...ts.map(t=>t.y+t.h))+GPAD+10;
+  const TH=$('#top').offsetHeight,vw=innerWidth,vh=innerHeight-TH;
+  const k=Math.min(vw/(x1-x0),vh/(y1-y0),1.2);
+  view={k,x:(vw-(x1-x0)*k)/2-x0*k,y:TH+(vh-(y1-y0)*k)/2-y0*k}; applyView();
+}
+function centerOn(t){
+  const pw=$('#panel').classList.contains('open')&&innerWidth>800?340:0;
+  view.k=Math.max(view.k,.9);
+  view.x=(innerWidth-pw)/2-(t.x+W/2)*view.k; view.y=(innerHeight+$('#top').offsetHeight)/2-(t.y+t.h/2)*view.k; applyView();
+}
+svg.addEventListener('wheel',ev=>{
+  ev.preventDefault();
+  const k2=Math.min(3,Math.max(.12,view.k*Math.exp(-ev.deltaY*.0012)));
+  const r=svg.getBoundingClientRect(),mx=ev.clientX-r.left,my=ev.clientY-r.top;
+  view.x=mx-(mx-view.x)*(k2/view.k); view.y=my-(my-view.y)*(k2/view.k); view.k=k2; applyView();
+},{passive:false});
+
+let drag=null;
+svg.addEventListener('pointerdown',ev=>{
+  const nodeEl=ev.target.closest('.node');
+  const t=nodeEl&&tables.find(x=>x.g===nodeEl);
+  drag={t,sx:ev.clientX,sy:ev.clientY,ox:t?t.x:view.x,oy:t?t.y:view.y,moved:false};
+  svg.setPointerCapture(ev.pointerId); if(!t)svg.classList.add('panning');
+});
+svg.addEventListener('pointermove',ev=>{
+  if(!drag){
+    const n=ev.target.closest&&ev.target.closest('.node');
+    const nm=n?tables.find(x=>x.g===n).name:null;
+    if(nm!==hovered){hovered=nm;if(!selected)refresh();}
+    return;
+  }
+  const dx=ev.clientX-drag.sx,dy=ev.clientY-drag.sy;
+  if(Math.abs(dx)+Math.abs(dy)>3)drag.moved=true;
+  if(drag.t){drag.t.x=drag.ox+dx/view.k;drag.t.y=drag.oy+dy/view.k;redraw();}
+  else{view.x=drag.ox+dx;view.y=drag.oy+dy;applyView();}
+});
+svg.addEventListener('pointerup',ev=>{
+  if(drag&&!drag.moved){ select(drag.t?(selected===drag.t.name?null:drag.t.name):null); }
+  drag=null;svg.classList.remove('panning');
+});
+svg.addEventListener('pointerleave',()=>{if(!drag&&hovered){hovered=null;if(!selected)refresh();}});
+
+/* ---------- КОНТРОЛЫ ---------- */
+const chips=$('#chips');
+Object.keys(GROUPS).forEach(k=>{
+  const c=document.createElement('span'); c.className='chip'; c.style.setProperty('--c',colorVar(k));
+  c.innerHTML=`<i></i>${GROUPS[k].title}`;
+  c.onclick=()=>{hidden.has(k)?hidden.delete(k):hidden.add(k);c.classList.toggle('off',hidden.has(k));
+    if(selected&&hidden.has(byName[selected].group))select(null);drawGroups();refresh();};
+  chips.appendChild(c);
+});
+$('#q').addEventListener('input',e=>{query=e.target.value;refresh();});
+$('#q').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){const q=query.trim().toLowerCase();
+    const t=q&&tables.find(t=>!hidden.has(t.group)&&(t.name.includes(q)||t.cols.some(c=>c.n.includes(q))));
+    if(t){centerOn(t);}}
+});
+$('#fit').onclick=fit;
+$('#reset').onclick=()=>{layout();redraw();fit();};
+const setTheme=t=>document.documentElement.setAttribute('data-theme',t);
+setTheme(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+$('#theme').onclick=()=>setTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');
+addEventListener('resize',()=>{});
+
+const _th=()=>document.documentElement.style.setProperty('--th',$('#top').offsetHeight+'px');_th();addEventListener('resize',()=>{_th();});
+layout();redraw();refresh();fit();
+</script>
+</body>
+</html>
