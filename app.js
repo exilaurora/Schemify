@@ -193,6 +193,11 @@
     const e = $('#save-state');
     e.dataset.state = s;
     e.textContent = { saved: L.saved, saving: L.saving, failed: L.saveFailed, memory: L.memoryOnly }[s];
+    if (s == "saved") {
+      e.hidden = true;
+    } else {
+      e.hidden = false;
+    }
   }
   function scheduleSave() { setSaveState('saving'); clearTimeout(saveTimer); saveTimer = setTimeout(flushSave, 500); }
   function flushSave() {
@@ -1555,7 +1560,7 @@
   $('#b-groups').addEventListener('click', () => { groupsPanel = !(groupsPanel && !sel.size); sel.clear(); R.refresh(); renderPanel(); });
   $('#b-undo').addEventListener('click', undo);
   $('#b-redo').addEventListener('click', redo);
-  $('#fit').addEventListener('click', fitView);
+  // $('#fit').addEventListener('click', fitView);
   $('#b-layout').addEventListener('click', doAutoLayout);
   $('#b-snap').addEventListener('click', () => { prefs.snap = !prefs.snap; savePrefs(); $('#b-snap').setAttribute('aria-pressed', String(prefs.snap)); });
   $('#theme').addEventListener('click', () => { ERD.setTheme(ERD.currentTheme() === 'dark' ? 'light' : 'dark', true); scheduleMinimap(); });

@@ -15,7 +15,12 @@
 <div id="top">
   <button id="sb-toggle" type="button" class="icon" data-i18n-aria="toggleSidebar" aria-controls="sidebar" aria-expanded="false">☰</button>
   <div class="title">
-    <input id="dname" class="dname" type="text" data-i18n-aria="diagramName" spellcheck="false" autocomplete="off">
+    <!--
+      Название проекта было удалено из header'а.
+      Но на этом элементе немалый кусок логики завязан.
+      Так что просто скрыл его
+    -->
+    <input id="dname" class="dname" type="text" hidden="true" data-i18n-aria="diagramName" spellcheck="false" autocomplete="off">
     <span id="save-state" class="save-state" role="status" aria-live="polite"></span>
   </div>
   <div class="seg" role="radiogroup" data-i18n-aria="modeAria">
@@ -31,7 +36,7 @@
     <button id="b-undo" type="button" class="icon" data-i18n-aria="undo">↶</button>
     <button id="b-redo" type="button" class="icon" data-i18n-aria="redo">↷</button>
   </div>
-  <button id="fit" type="button" data-i18n="fit" title="F"></button>
+  <!-- <button id="fit" type="button" data-i18n="fit" title="F"></button> -->
   <button id="b-layout" type="button" class="edit-only" data-i18n="autoLayout"></button>
   <button id="b-snap" type="button" class="edit-only toggle icon" aria-pressed="false" data-i18n-aria="snapAria">⌗</button>
   <div class="menu-wrap">
@@ -43,7 +48,7 @@
 </div>
 
 <aside id="sidebar" data-i18n-aria="diagrams">
-  <div class="brand"><b>Schemify</b> <span data-i18n="appTagline"></span></div>
+  <!-- <div class="brand"><b>Schemify</b> <span data-i18n="appTagline"></span></div> -->
   <div class="sb-head">
     <h2 data-i18n="diagrams"></h2>
     <button id="sb-new" type="button" data-i18n="newDiagram"></button>
