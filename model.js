@@ -170,6 +170,68 @@ var Model = (function () {
     }));
   }
 
+
+  /* ---------- проверка схемы и автоисправление ---------- */
+  const TYPE_ALIAS = {
+    int: 'int', integer: 'int', int4: 'int', serial: 'int', serial4: 'int',
+    bigint: 'bigint', int8: 'bigint', bigserial: 'bigint', serial8: 'bigint',
+    smallint: 'smallint', int2: 'smallint', smallserial: 'smallint', serial2: 'smallint',
+    bool: 'boolean', boolean: 'boolean', 'double precision': 'float8', float8: 'float8', float4: 'real', real: 'real',
+    decimal: 'numeric', numeric: 'numeric', timestamptz: 'timestamptz', tstz: 'timestamptz',
+    'timestamp with time zone': 'timestamptz', 'timestamp without time zone': 'timestamp',
+    'character varying': 'varchar', varchar: 'varchar', character: 'char', char: 'char'
+  };
+  /* каноническая форма типа для сравнения: serial ≡ int, int4 ≡ integer, decimal ≡ numeric … */
+  function canonType(t) {
+    t = String(t || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const m = t.match(/^([a-z0-9_ ]+?)\s*(\(.*?\))?\s*((?:\[\])*)$/);
+    if (!m) return t;
+    const base = m[1].trim();
+    return (TYPE_ALIAS[base] || base) + (m[2] ? m[2].replace(/\s+/g, '') : '') + (m[3] || '');
+  }
+  /* тип внешнего ключа для целевого типа: serial → int, bigserial → bigint */
+  function fkTypeFor(t) {
+    const x = String(t || '').trim(), l = x.toLowerCase();
+    return l === 'serial' || l === 'serial4' ? 'int' : l === 'bigserial' || l === 'serial8' ? 'bigint' : l === 'smallserial' || l === 'serial2' ? 'smallint' : x;
+  }
+  /* → [{kind, t, ci, msg, fix?}]; fix() применяет исправление к диаграмме без побочных эффектов вне модели */
+  function lint(d) {
+    const issues = [], byId = new Map(d.tables.map(t => [t.id, t]));
+    d.tables.forEach(t => {
+      if (!t.columns.some(c => c.pk)) issues.push({ kind: 'noPk', t, ci: -1, msg: fmt(S.lNoPk, { t: t.name }) });
+      const seen = new Map();
+      t.columns.forEach((c, ci) => {
+        const key = c.name.trim();
+        if (key && seen.has(key)) {
+          issues.push({
+            kind: 'dupCol', t, ci, msg: fmt(S.lDupCol, { t: t.name, c: c.name }),
+            fix: () => { const taken = new Set(t.columns.map(x => x.name)); c.name = uniqueName(c.name, taken).replace('_copy', '_'); }
+          });
+        } else if (key) seen.set(key, ci);
+        if (!c.ref) return;
+        const r = ERD.resolveRef(byId, c.ref); if (!r) return;
+        const tc = r.to.columns[r.ti], target = r.to.name + '.' + tc.name;
+        if (!c.type.trim() && tc.type.trim()) {
+          issues.push({ kind: 'fkType', t, ci, msg: fmt(S.lFkEmpty, { t: t.name, c: c.name, target, to: fkTypeFor(tc.type) }), fix: () => { c.type = fkTypeFor(tc.type); } });
+        } else if (tc.type.trim() && canonType(c.type) !== canonType(fkTypeFor(tc.type))) {
+          issues.push({ kind: 'fkType', t, ci, msg: fmt(S.lFkType, { t: t.name, c: c.name, from: c.type, target, tt: tc.type, to: fkTypeFor(tc.type) }), fix: () => { c.type = fkTypeFor(tc.type); } });
+        }
+        if (!tc.pk && !tc.unique) issues.push({ kind: 'fkTarget', t, ci, msg: fmt(S.lFkTarget, { t: t.name, c: c.name, target }) });
+      });
+    });
+    return issues;
+  }
+  /* применяет все автоисправления; возвращает число исправленных */
+  function autofix(d) {
+    let n = 0;
+    for (let pass = 0; pass < 3; pass++) {
+      const fixable = lint(d).filter(i => i.fix);
+      if (!fixable.length) break;
+      fixable.forEach(i => { i.fix(); n++; });
+    }
+    return n;
+  }
+
   /* миграции: ключ — исходная версия, функция поднимает объект на версию выше */
   const MIGRATIONS = {
     0: d => {
@@ -215,6 +277,7 @@ var Model = (function () {
       updatedAt: str(raw.updatedAt, 40) || now(), view, groups, tables
     };
     ensurePositions(d, warnings);
+    lint(d).filter(i => i.fix && i.kind === 'fkType').forEach(i => { i.fix(); warnings.push(S.wAutoFixed + ' ' + i.msg); });
     return { diagram: d, warnings };
   }
 
@@ -383,7 +446,7 @@ var Model = (function () {
   return {
     FORMAT, BUNDLE, CLIP, VERSION, PG_TYPES, PALETTE, ModelError,
     uid, groupId, now, lighten, nextColor, newDiagram, newGroup, newTable, newColumn,
-    normalizeDiagram, ensurePositions, toJSON, cloneTable, parseAny, extractFromHtml,
+    normalizeDiagram, ensurePositions, lint, autofix, canonType, toJSON, cloneTable, parseAny, extractFromHtml,
     makeFragment, normalizeFragment, insertFragment, uniqueName, removeTables, renameColumn, removeColumn
   };
 })();

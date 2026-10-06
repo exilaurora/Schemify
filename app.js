@@ -175,14 +175,14 @@
     if (o.render !== false) R.rebuild(o.ids);
     if (History.commit(o.merge)) { D.updatedAt = Model.now(); scheduleSave(); }
     if (o.panel !== false) renderPanel(o.focus);
-    renderChips(); updateEmpty(); scheduleMinimap();
+    renderChips(); updateEmpty(); scheduleMinimap(); updateLint();
   }
   function afterHistory() {
     cancelInline();
     R.rebuild();
     D.updatedAt = Model.now(); scheduleSave();
     $('#dname').value = D.name; document.title = D.name + ' — ' + L.appTitle;
-    renderChips(); renderPanel(); updateEmpty(); scheduleMinimap();
+    renderChips(); renderPanel(); updateEmpty(); scheduleMinimap(); updateLint();
   }
   function undo() { if (canEdit() && History.step(-1)) afterHistory(); }
   function redo() { if (canEdit() && History.step(1)) afterHistory(); }
@@ -251,7 +251,7 @@
     D.name = nd.name; D.groups = nd.groups; D.tables = nd.tables; D.updatedAt = nd.updatedAt; lastWritten = nd.updatedAt;
     R.rebuild(); History.commit();
     $('#dname').value = D.name;
-    renderChips(); renderPanel(); renderSidebar(); updateEmpty(); scheduleMinimap();
+    renderChips(); renderPanel(); renderSidebar(); updateEmpty(); scheduleMinimap(); updateLint();
   }
 
   /* ======================= ОТКРЫТИЕ ДИАГРАММ ======================= */
@@ -270,7 +270,7 @@
     $('#dname').value = D.name;
     document.title = D.name + ' — ' + L.appTitle;
     if (!Store.has(D.id)) flushSave(); else setSaveState(Store.persistent ? 'saved' : 'memory');
-    renderChips(); renderPanel(); renderSidebar(); updateEmpty(); scheduleMinimap();
+    renderChips(); renderPanel(); renderSidebar(); updateEmpty(); scheduleMinimap(); updateLint();
   }
   function updateEmpty() {
     const e = $('#empty');
@@ -1381,17 +1381,46 @@
   mm.querySelector('.mm-close').addEventListener('click', () => setMinimap(false));
   $('#mm-show').addEventListener('click', () => setMinimap(true));
 
+
+  /* ======================= ПРОВЕРКА СХЕМЫ ======================= */
+  function updateLint() {
+    const b = $('#b-lint'); if (!b || !D) return;
+    const n = Model.lint(D).filter(i => i.kind !== 'noPk').length;
+    b.hidden = !n; b.textContent = fmt(L.lintBtn, { n });
+  }
+  function applyFix(fixes) {
+    if (!canEdit()) return;
+    fixes.forEach(f => f());
+    changed({ panel: false });
+    toast(fmt(L.lintFixed, { n: fixes.length }));
+  }
+  async function openLint() {
+    const issues = Model.lint(D);
+    if (!issues.length) { toast(L.lintNone); return; }
+    const fixable = issues.filter(i => i.fix);
+    const body = el('ul', { class: 'lint-list' }, issues.map(i => el('li', {}, [
+      el('span', { text: i.msg }),
+      i.fix ? el('button', { type: 'button', text: L.lintFix, onclick: ev => { ev.preventDefault(); applyFix([i.fix]); ev.target.closest('li').remove(); } }) : null
+    ])));
+    const v = await dialog({
+      title: L.lintTitle, body,
+      buttons: (fixable.length ? [{ value: 'all', label: L.lintFixAll, primary: true }] : []).concat([{ value: '', label: L.cancel }])
+    });
+    if (v === 'all') applyFix(Model.lint(D).filter(i => i.fix).map(i => i.fix));
+  }
+  $('#b-lint').addEventListener('click', openLint);
+
   /* ======================= МЕНЮ «ФАЙЛ» ======================= */
   const menu = $('#file-menu'), fileBtn = $('#b-file');
   const ACTIONS = {
     import: pickFile, exportJson, exportHtml, exportSvg, exportPng, exportAll,
     copy: () => copySelection(false), paste: () => pasteFromButton(), pasteJson: openPasteJson,
-    newDiagram, sample: loadSample, minimap: () => setMinimap(!prefs.minimap)
+    lint: openLint, newDiagram, sample: loadSample, minimap: () => setMinimap(!prefs.minimap)
   };
   function renderMenu() {
     const items = [['import', L.mImport], ['exportJson', L.mExportJson, 'Ctrl+S'], ['exportHtml', L.mExportHtml], ['exportSvg', L.mExportSvg],
       ['exportPng', L.mExportPng], ['exportAll', L.mExportAll], '-', ['copy', L.mCopy, 'Ctrl+C'], ['paste', L.mPaste, 'Ctrl+V'],
-      ['pasteJson', L.mPasteJson], '-', ['newDiagram', L.mNewDiagram], ['sample', L.mSample], '-', ['minimap', L.minimap]];
+      ['pasteJson', L.mPasteJson], '-', ['lint', L.mLint], ['newDiagram', L.mNewDiagram], ['sample', L.mSample], '-', ['minimap', L.minimap]];
     menu.textContent = '';
     items.forEach(it => {
       if (it === '-') { menu.appendChild(el('hr', { role: 'separator' })); return; }
