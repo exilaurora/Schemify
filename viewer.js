@@ -285,6 +285,11 @@ JSON схемы:
     cmPasteJson: 'Вставить из JSON…',
     cmSelectAll: 'Выделить всё',
     cmFit: 'По размеру',
+    cmAddNote: 'Добавить заметку',
+    cmEditNote: 'Изменить заметку',
+    cmDeleteNote: 'Удалить заметку',
+    noteDeleted: 'Заметка удалена',
+    notePh: 'Текст заметки (Ctrl+Enter — готово)',
     cmAutoLayout: 'Авторасстановка',
     cmGroups: 'Группы…',
     cmRenameTable: 'Переименовать таблицу',
@@ -456,6 +461,9 @@ button:hover{border-color:var(--muted)}
 .gtitle{fill:var(--c);font-size:15px;font-weight:700;letter-spacing:.3px;user-select:none}
 .node{cursor:move;transition:opacity .15s}
 .node text{user-select:none}
+.note rect{fill:var(--pk);fill-opacity:.16;stroke:var(--pk);stroke-width:1}
+.note.sel rect{stroke:var(--accent);stroke-width:2;fill-opacity:.26}
+.note text{fill:var(--text);font:11.5px ui-monospace,Menlo,Consolas,monospace;user-select:none;white-space:pre}
 .node .body{fill:var(--card);stroke:var(--card-line);stroke-width:1}
 .node .head{fill:var(--c)}
 .node.sel .body{stroke:var(--c);stroke-width:2.5}
@@ -694,15 +702,17 @@ button:hover{border-color:var(--muted)}
       this.gl = mk('g', { id: 'gl' }, this.vp);
       this.el = mk('g', { id: 'el' }, this.vp);
       this.nl = mk('g', { id: 'nl' }, this.vp);
+      this.tl = mk('g', { id: 'tl' }, this.vp);
       this.ol = mk('g', { id: 'ol' }, this.vp);
       this.nodes = new Map(); this.gEls = new Map();
       this.edges = []; this.edgesBy = new Map();
       this.idx = null; this.d = null;
-      this.st = { selected: new Set(), hovered: null, query: '', hidden: new Set() };
+      this.st = { selected: new Set(), hovered: null, query: '', hidden: new Set(), note: null };
     }
     get view() { return this.d.view; }
     setDiagram(d) {
       this.d = d;
+      if (!Array.isArray(d.notes)) d.notes = [];
       if (!d.view || !isFinite(d.view.x) || !isFinite(d.view.y) || !(d.view.k > 0)) d.view = { x: 0, y: 0, k: 1 };
       this.st.selected.clear(); this.st.hovered = null;
       this.rebuild(); this.applyView();
@@ -725,7 +735,22 @@ button:hover{border-color:var(--muted)}
       }
       for (const id of this.st.selected) if (!this.idx.byId.has(id)) this.st.selected.delete(id);
       if (this.st.hovered && !this.idx.byId.has(this.st.hovered)) this.st.hovered = null;
-      this._syncGroups(); this._buildEdges(); this.drawGroups(); this.refresh();
+      this._syncGroups(); this._buildEdges(); this.drawGroups(); this._syncNotes(); this.refresh();
+    }
+    /* заметки: свободный текст на холсте, не связанный с таблицами */
+    _syncNotes() {
+      this.tl.textContent = '';
+      (this.d.notes || []).forEach(n => {
+        const lines = n.text.split('\n'), LH = 16, P = 10;
+        const w = Math.ceil(Math.max(60, ...lines.map(l => measure(l, FONT.col))) + P * 2), h = lines.length * LH + P * 2 - 2;
+        const g = mk('g', { class: 'note' + (this.st.note === n.id ? ' sel' : ''), 'data-nid': n.id, transform: `translate(${n.x} ${n.y})` }, this.tl);
+        mk('rect', { width: w, height: h, rx: 6 }, g);
+        lines.forEach((l, i) => { const t = mk('text', { x: P, y: P + 11 + i * LH }, g); t.textContent = l; });
+      });
+    }
+    moveNote(n) {
+      const g = this.tl.querySelector(`[data-nid="${n.id}"]`);
+      if (g) g.setAttribute('transform', `translate(${n.x} ${n.y})`);
     }
     _node(t, replace) {
       const w = tableWidth(t), h = tableHeight(t), fk = this.idx.fk;
@@ -1146,12 +1171,14 @@ button:hover{border-color:var(--muted)}
     /* границы видимых таблиц с отступом под рамки групп */
     bounds(onlyIds) {
       const ts = this.d.tables.filter(t => this.isVisible(t) && this.nodes.has(t.id) && (!onlyIds || onlyIds.has(t.id)));
-      if (!ts.length) return null;
+      const notes = onlyIds ? [] : this.d.notes || [];
+      if (!ts.length && !notes.length) return null;
+      const nb = notes.map(n => { const bb = this.tl.querySelector(`[data-nid="${n.id}"]`).getBBox(); return { x0: n.x - 10, y0: n.y - 10, x1: n.x + bb.width + 10, y1: n.y + bb.height + 10 }; });
       return {
-        x0: Math.min(...ts.map(t => t.x)) - C.GPAD - 10,
-        y0: Math.min(...ts.map(t => t.y)) - C.GHEAD - 10,
-        x1: Math.max(...ts.map(t => t.x + this.nodes.get(t.id).w)) + C.GPAD + 10,
-        y1: Math.max(...ts.map(t => t.y + this.nodes.get(t.id).h)) + C.GPAD + 10
+        x0: Math.min(...ts.map(t => t.x - C.GPAD - 10), ...nb.map(r => r.x0)),
+        y0: Math.min(...ts.map(t => t.y - C.GHEAD - 10), ...nb.map(r => r.y0)),
+        x1: Math.max(...ts.map(t => t.x + this.nodes.get(t.id).w + C.GPAD + 10), ...nb.map(r => r.x1)),
+        y1: Math.max(...ts.map(t => t.y + this.nodes.get(t.id).h + C.GPAD + 10), ...nb.map(r => r.y1))
       };
     }
     fit(m) {

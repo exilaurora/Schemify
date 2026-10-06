@@ -137,7 +137,7 @@
   /* ======================= ИСТОРИЯ (снимки, ≥100 шагов) ======================= */
   const History = {
     undo: [], redo: [], cur: null, key: null, t: 0, LIMIT: 200,
-    snap() { return JSON.stringify({ name: D.name, groups: D.groups, tables: D.tables }); },
+    snap() { return JSON.stringify({ name: D.name, groups: D.groups, tables: D.tables, notes: D.notes }); },
     reset() { this.undo = []; this.redo = []; this.cur = this.snap(); this.key = null; updateUndoButtons(); },
     /* merge — ключ слияния: подряд идущие правки одного поля текста = один шаг */
     commit(merge) {
@@ -157,7 +157,7 @@
       if (!from.length) return false;
       to.push(this.cur); this.cur = from.pop(); this.key = null;
       const o = JSON.parse(this.cur);
-      D.name = o.name; D.groups = o.groups; D.tables = o.tables;
+      D.name = o.name; D.groups = o.groups; D.tables = o.tables; D.notes = o.notes || [];
       updateUndoButtons();
       return true;
     }
@@ -283,6 +283,15 @@
     sel.clear(); ids.forEach(id => sel.add(id));
     if (ids.length) groupsPanel = false;
     R.refresh(); renderPanel();
+  }
+  function selectNote(id) {
+    st.note = id;
+    svg.querySelectorAll('.note').forEach(g => g.classList.toggle('sel', g.getAttribute('data-nid') === id));
+  }
+  function deleteNote(id) {
+    D.notes = D.notes.filter(n => n.id !== id); st.note = null;
+    changed({ panel: false });
+    toast(L.noteDeleted, { actions: [{ label: L.undo.split(' (')[0], fn: undo }] });
   }
   function selectAll() { setSelection(D.tables.filter(t => R.isVisible(t)).map(t => t.id)); }
   const snapV = v => (prefs.snap ? Math.round(v / C.GRID) * C.GRID : Math.round(v));
@@ -675,6 +684,8 @@
     const tgt = ev.target, id = R.nodeIdOf(tgt), edit = mode === 'edit';
     const base = { sx: ev.clientX, sy: ev.clientY, moved: false, pid: ev.pointerId };
     pointerWorld = R.toWorld(ev.clientX, ev.clientY);
+    const onNote = !!(tgt.closest && tgt.closest('.note'));
+    if (st.note && !onNote) selectNote(null);
     if (ev.button === 1) {
       ev.preventDefault();
       drag = Object.assign(base, { type: 'pan', ox: D.view.x, oy: D.view.y });
@@ -704,6 +715,10 @@
         /* просмотр: клик по таблице показывает детали, перетаскивание ничего не делает */
         drag = Object.assign(base, { type: 'pan', ox: D.view.x, oy: D.view.y, clickId: id, noPan: true });
       }
+    } else if (edit && tgt.closest && tgt.closest('.note')) {
+      const n = D.notes.find(x => x.id === tgt.closest('.note').getAttribute('data-nid'));
+      if (n) { if (sel.size) { sel.clear(); R.refresh(); renderPanel(); } selectNote(n.id); }
+      drag = n ? Object.assign(base, { type: 'note', n, ox: n.x, oy: n.y }) : Object.assign(base, { type: 'none' });
     } else if (edit && tgt.classList.contains('gtitle')) {
       const gid = tgt.getAttribute('data-gid');
       const ids = D.tables.filter(t => t.group === gid && R.isVisible(t)).map(t => t.id);
@@ -735,6 +750,11 @@
     if (!drag.moved) return;
     const d = drag, k = D.view.k;
     if (d.type === 'pan') { if (!d.noPan) { D.view.x = d.ox + dx; D.view.y = d.oy + dy; R.applyView(); } }
+    else if (d.type === 'note') {
+      let nx = d.ox + dx / k, ny = d.oy + dy / k;
+      if (prefs.snap) { nx = snapV(nx); ny = snapV(ny); }
+      d.n.x = nx; d.n.y = ny; R.moveNote(d.n);
+    }
     else if (d.type === 'move' && d.ids.length) {
       if (!d.grects && !d.group) d.grects = R.groupBounds(new Set(d.ids));
       const s0 = d.start.get(d.id) || d.start.get(d.ids[0]);
@@ -775,6 +795,9 @@
       if (d.moved || cancelled) return;
       if (d.clickId) { const on = sel.has(d.clickId) && sel.size === 1; setSelection(on ? [] : [d.clickId]); }
       else if (sel.size || groupsPanel) { groupsPanel = false; setSelection([]); }
+    } else if (d.type === 'note') {
+      if (d.moved && cancelled) { d.n.x = d.ox; d.n.y = d.oy; R.moveNote(d.n); }
+      else if (d.moved) { d.n.x = Math.round(d.n.x); d.n.y = Math.round(d.n.y); R.moveNote(d.n); changed({ render: false, panel: false }); }
     } else if (d.type === 'move') {
       const drop = dropGid; setDropGroup(null);
       if (d.moved && cancelled) {
@@ -865,6 +888,10 @@
   svg.addEventListener('dblclick', ev => {
     if (mode !== 'edit') return;
     const tgt = ev.target, id = R.nodeIdOf(tgt);
+    /* из-за захвата указателя target бывает самим svg — ищем заметку по координатам */
+    const hit = document.elementFromPoint(ev.clientX, ev.clientY);
+    const noteEl = (hit && hit.closest && hit.closest('.note')) || (tgt.closest && tgt.closest('.note'));
+    if (noteEl) { editNote(noteEl.getAttribute('data-nid')); return; }
     if (id) {
       const t = byId(id), node = R.info(id).g, row = tgt.closest('.row');
       if (row && !tgt.classList.contains('port')) renameColumnInline(t, +row.getAttribute('data-i'));
@@ -898,10 +925,19 @@
     commitInline();
     const tgt = ev.target, id = R.nodeIdOf(tgt), edit = mode === 'edit';
     const p = R.toWorld(ev.clientX, ev.clientY);
+    const noteEl = tgt.closest && tgt.closest('.note');
     const items = [];
     const add = (label, fn, kbd, danger) => items.push({ label, fn, kbd, danger });
     const sep = () => items.push('-');
-    if (id) {
+    if (noteEl) {
+      const nid = noteEl.getAttribute('data-nid');
+      selectNote(nid);
+      if (edit) {
+        add(L.cmEditNote, () => editNote(nid));
+        sep();
+        add(L.cmDeleteNote, () => deleteNote(nid), 'Delete', true);
+      }
+    } else if (id) {
       if (!sel.has(id)) setSelection([id]);
       const t = byId(id), row = tgt.closest('.row'), n = sel.size;
       if (edit && row && n === 1) {
@@ -931,6 +967,7 @@
     } else if (tgt.classList.contains('gbox') || tgt.classList.contains('gtitle')) {
       const gid = tgt.getAttribute('data-gid');
       if (edit) add(L.cmAddTableToGroup, () => addTable(p, gid), 'N');
+      if (edit) add(L.cmAddNote, () => noteEditor(null, p, { x: ev.clientX, y: ev.clientY }));
       if (edit) add(L.cmSelectGroup, () => setSelection(D.tables.filter(t => t.group === gid && R.isVisible(t)).map(t => t.id)));
       if (edit) {
         add(L.cmRenameGroup, () => renameGroupInline(gid));
@@ -941,6 +978,7 @@
     } else {
       if (edit) {
         add(L.cmAddTable, () => addTable(p, null), 'N');
+        add(L.cmAddNote, () => noteEditor(null, p, { x: ev.clientX, y: ev.clientY }));
         add(L.cmPaste, () => pasteFromButton(p), 'Ctrl+V');
         add(L.cmPasteJson, openPasteJson);
         sep();
@@ -969,6 +1007,36 @@
     inp.addEventListener('keydown', e => {
       e.stopPropagation();
       if (e.key === 'Enter') { e.preventDefault(); commitInline(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancelInline(); }
+    });
+    inp.addEventListener('blur', () => commitInline());
+  }
+  /* заметка: многострочный редактор; существующую правим на месте, новую создаём при подтверждении */
+  function editNote(nid) {
+    const n = D.notes.find(x => x.id === nid), g = svg.querySelector(`.note[data-nid="${nid}"]`);
+    if (!n || !g || !canEdit()) return;
+    const r = g.getBoundingClientRect();
+    noteEditor(n, null, { x: r.left, y: r.top });
+  }
+  function noteEditor(note, world, scr) {
+    if (!canEdit()) return;
+    commitInline();
+    const k = D.view.k;
+    const inp = el('textarea', {
+      class: 'inline-edit note-edit', value: note ? note.text : '', placeholder: L.notePh, spellcheck: 'false',
+      style: { left: scr.x + 'px', top: scr.y + 'px', width: Math.max(220, 200 * k) + 'px' }
+    });
+    document.body.appendChild(inp); inp.focus(); inp.select();
+    inline = {
+      inp, value: note ? note.text : '',
+      onCommit: v => {
+        if (note) note.text = v; else D.notes.push(Model.newNote(v, world.x, world.y));
+        changed({ panel: false });
+      }
+    };
+    inp.addEventListener('keydown', e => {
+      e.stopPropagation();
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commitInline(); }
       else if (e.key === 'Escape') { e.preventDefault(); cancelInline(); }
     });
     inp.addEventListener('blur', () => commitInline());
@@ -1208,7 +1276,7 @@
       ERD.mk('circle', { cx: 1.2, cy: 1.2, r: 1.2, fill: v('--grid') }, pat);
       ERD.mk('rect', { x: x0, y: y0, width: w, height: h, fill: v('--bg') }, out);
       ERD.mk('rect', { x: x0, y: y0, width: w, height: h, fill: 'url(#dots)' }, out);
-      [R.gl, R.el, R.nl].forEach(layer => { const c = inlineClone(layer); if (c) out.appendChild(c); });
+      [R.gl, R.el, R.nl, R.tl].forEach(layer => { const c = inlineClone(layer); if (c) out.appendChild(c); });
       return { text: '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(out), w, h };
     } finally {
       saved.sel.forEach(id => sel.add(id)); st.hovered = saved.hov; st.query = saved.q; R.refresh();
@@ -1486,6 +1554,7 @@
     delete o.view; delete o.updatedAt; delete o.id;
     o.groups.forEach(g => { delete g.colorDark; });
     o.tables.forEach(t => { delete t.x; delete t.y; });
+    o.notes.forEach(n => { delete n.x; delete n.y; delete n.id; });
     return JSON.stringify(o, null, 2);
   }
   function copyText(text) { writeClipboard(text); toast(L.aiCopied); }
@@ -1566,6 +1635,7 @@
       return;
     }
     if (e.altKey) return;
+    if ((e.key === 'Delete' || e.key === 'Backspace') && st.note && !sel.size) { e.preventDefault(); if (canEdit()) deleteNote(st.note); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') { if (sel.size) { e.preventDefault(); deleteSelected(); } return; }
     if (e.key === 'Escape') {
       if (drag) { endDrag({ clientX: 0, clientY: 0 }, true); return; }

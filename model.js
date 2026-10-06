@@ -67,7 +67,7 @@ var Model = (function () {
 
   /* ---------- конструкторы ---------- */
   function newDiagram(name) {
-    return { format: FORMAT, version: VERSION, id: uid(), name: name || S.newDiagramName, updatedAt: now(), view: null, groups: [], tables: [] };
+    return { format: FORMAT, version: VERSION, id: uid(), name: name || S.newDiagramName, updatedAt: now(), view: null, groups: [], tables: [], notes: [] };
   }
   function newGroup(title, groups) {
     const c = nextColor(groups || []);
@@ -83,6 +83,8 @@ var Model = (function () {
       x: Math.round(x || 0), y: Math.round(y || 0), columns: [newColumn('id', 'bigint', { pk: true })]
     };
   }
+
+  function newNote(text, x, y) { return { id: uid(), text: text || '', x: Math.round(x || 0), y: Math.round(y || 0) }; }
 
   /* ---------- нормализация ---------- */
   const str = (v, max) => (typeof v === 'string' ? v : v == null ? '' : typeof v === 'number' ? String(v) : '').slice(0, max || 10000);
@@ -103,6 +105,18 @@ var Model = (function () {
       if (orig && !map.has(orig)) map.set(orig, id);
     });
     return { groups: out, map };
+  }
+
+  function normNotes(raw) {
+    const out = [], ids = new Set();
+    (Array.isArray(raw) ? raw : []).forEach(n => {
+      if (!isObj(n)) return;
+      const text = str(n.text, 5000); if (!text.trim()) return;
+      let id = str(n.id, 64); if (!id || ids.has(id)) id = uid();
+      ids.add(id);
+      out.push({ id, text, x: round2(num(n.x) || 0), y: round2(num(n.y) || 0) });
+    });
+    return out;
   }
 
   function normColumn(c) {
@@ -274,7 +288,7 @@ var Model = (function () {
     }
     const d = {
       format: FORMAT, version: VERSION, id: str(raw.id, 200) || uid(), name: str(raw.name, 200) || S.newDiagramName,
-      updatedAt: str(raw.updatedAt, 40) || now(), view, groups, tables
+      updatedAt: str(raw.updatedAt, 40) || now(), view, groups, tables, notes: normNotes(raw.notes)
     };
     ensurePositions(d, warnings);
     lint(d).filter(i => i.fix && i.kind === 'fkType').forEach(i => { i.fix(); warnings.push(S.wAutoFixed + ' ' + i.msg); });
@@ -294,7 +308,8 @@ var Model = (function () {
       format: FORMAT, version: VERSION, id: d.id, name: d.name, updatedAt: d.updatedAt,
       view: d.view ? { x: round2(d.view.x), y: round2(d.view.y), k: Math.round(d.view.k * 10000) / 10000 } : null,
       groups: d.groups.map(g => ({ id: g.id, title: g.title, color: g.color, colorDark: g.colorDark })),
-      tables: d.tables.map(cloneTable)
+      tables: d.tables.map(cloneTable),
+      notes: (d.notes || []).map(n => ({ id: n.id, text: n.text, x: round2(n.x), y: round2(n.y) }))
     };
   }
   const round2 = v => Math.round(v * 100) / 100;
@@ -445,7 +460,7 @@ var Model = (function () {
 
   return {
     FORMAT, BUNDLE, CLIP, VERSION, PG_TYPES, PALETTE, ModelError,
-    uid, groupId, now, lighten, nextColor, newDiagram, newGroup, newTable, newColumn,
+    uid, groupId, now, lighten, nextColor, newDiagram, newGroup, newTable, newColumn, newNote,
     normalizeDiagram, ensurePositions, lint, autofix, canonType, toJSON, cloneTable, parseAny, extractFromHtml,
     makeFragment, normalizeFragment, insertFragment, uniqueName, removeTables, renameColumn, removeColumn
   };

@@ -218,3 +218,5 @@ dialog.dlg::backdrop{background:rgba(10,14,20,.45)}
 .lint-list{max-height:50vh;overflow:auto;margin:8px 0;padding:0;list-style:none}
 .lint-list li{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border,#8884);font-size:13px}
 .lint-list button{flex:none;font-size:12px}
+#svg.editing .note{cursor:move}
+.inline-edit.note-edit{font:12px ui-monospace,Menlo,Consolas,monospace;min-height:80px;resize:both;line-height:1.35}
