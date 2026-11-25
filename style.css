@@ -204,6 +204,17 @@ dialog.dlg::backdrop{background:rgba(10,14,20,.45)}
 .dlg .err{color:var(--danger);font-size:12.5px;margin-top:6px;white-space:pre-wrap}
 .dlg .err:empty{display:none}
 .dlg .warns{max-height:170px;overflow:auto;font-size:12px;color:var(--muted);padding-left:18px;margin:6px 0}
+dialog.conversion-dialog{width:min(740px,calc(100vw - 32px))}
+.conversion-fold[hidden]{display:none}
+.conversion-preview{display:block;width:100%;height:clamp(160px,31dvh,295px);background:var(--bg);
+  border:1px solid var(--card-line);border-radius:8px}
+.conversion-section{margin:10px 0}
+.conversion-section summary{cursor:pointer;font-size:13px;font-weight:600}
+.conversion-fields{max-height:220px;overflow:auto;margin-top:6px;display:grid;gap:6px}
+.conversion-row{min-width:0;margin:0;border:1px solid var(--card-line);border-radius:8px;padding:2px 9px 3px}
+.conversion-row legend,.conversion-row label span{overflow-wrap:anywhere}
+.conversion-row legend{font-size:12px}
+.conversion-row .field{margin:6px 0}
 #drop{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:600;
   background:color-mix(in srgb,var(--accent) 14%,transparent);border:3px dashed var(--accent);color:var(--text);pointer-events:none}
 #drop[hidden]{display:none}

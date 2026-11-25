@@ -1493,6 +1493,140 @@
     return el('select', {}, Object.entries(ERD.MODEL_KINDS).map(([kind, { title }]) =>
       el('option', { value: kind, text: title, selected: value === kind })));
   }
+  async function convertDiagram() {
+    if (D.kind !== 'logical' || !D.tables.length) {
+      toast('Откройте логическую модель с таблицами, чтобы построить из неё новую диаграмму.');
+      return;
+    }
+    const source = D, kind = el('select', {}, ['conceptual', 'physical'].map(value =>
+      el('option', { value, text: ERD.MODEL_KINDS[value].title })));
+    const dialect = el('select', {}, Object.entries(Conversion.DIALECTS).map(([value, spec]) =>
+      el('option', { value, text: spec.name })));
+    const fold = el('input', { type: 'checkbox', checked: true });
+    const dialectField = field('Целевая СУБД', dialect);
+    const foldField = el('label', { class: 'check conversion-fold' }, [fold, 'Сворачивать связующие таблицы без собственных атрибутов']);
+    const switchOptions = () => {
+      dialectField.hidden = kind.value !== 'physical';
+      foldField.hidden = kind.value !== 'conceptual';
+    };
+    kind.addEventListener('change', switchOptions);
+    switchOptions();
+    while (true) {
+      const action = await dialog({
+        title: 'Построить из текущей модели',
+        body: [field('Целевая модель', kind), dialectField, foldField,
+          el('p', { class: 'hint', text: 'Исходная модель «' + source.name + '» сохранится отдельно.' })],
+        buttons: [{ value: 'preview', label: 'Предпросмотр', primary: true }, { value: '', label: L.cancel }],
+        onOpen: () => kind.focus()
+      });
+      if (action !== 'preview' || D !== source) return;
+      const converted = Conversion.build(source, kind.value, { dialect: dialect.value, fold: fold.checked });
+      const result = await previewConversion(converted);
+      if (D !== source) return;
+      if (result === 'back') continue;
+      if (result === 'save') {
+        openDiagram(converted.diagram, true);
+        if (mode !== 'edit') setMode('edit');
+      }
+      return;
+    }
+  }
+
+  async function previewConversion({ diagram, types, pending, positions, warnings }) {
+    const concept = diagram.kind === 'conceptual';
+    const title = el('input', { type: 'text', value: diagram.name, maxlength: 200 });
+    const drawing = ERD.mk('svg', { class: 'conversion-preview', role: 'img', 'aria-label': 'Предпросмотр новой диаграммы' });
+    const preview = new ERD.Renderer(drawing);
+    preview.vp.querySelectorAll('[id]').forEach(layer => layer.removeAttribute('id'));
+    preview.vp.removeAttribute('id');
+    let frame;
+    const redraw = () => {
+      if (types.length) Conversion.applyTypes(types);
+      Conversion.layout(diagram, positions);
+      preview.rebuild();
+      const b = preview.vp.getBBox(), pad = 20;
+      drawing.setAttribute('viewBox', `${b.x - pad} ${b.y - pad} ${b.width + pad * 2} ${b.height + pad * 2}`);
+    };
+    const queueRedraw = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(redraw);
+    };
+    const tableNames = new Map(diagram.tables.map(t => [t.id, t.name]));
+    const relationshipFields = diagram.relationships.map((relation, i) => {
+      const first = tableNames.get(relation.from), last = tableNames.get(relation.to);
+      const card = (name, key) => field(name, cardinalitySelect(relation[key], value => { relation[key] = value; queueRedraw(); }));
+      return el('fieldset', { class: 'conversion-row' }, [
+        el('legend', { text: `${first} → ${last}` }),
+        field('Название связи', el('input', {
+          type: 'text', value: relation.name, maxlength: 160, 'aria-label': 'Название связи ' + (i + 1),
+          oninput: e => { relation.name = e.target.value.trim() || ERD.STR.defaultRelationship; queueRedraw(); }
+        })),
+        el('div', { class: 'dlg-pair' }, [card('Кратность у «' + first + '» (первая)', 'fromCardinality'), card('Кратность у «' + last + '» (вторая)', 'toCardinality')])
+      ]);
+    });
+    const typeFields = pending.map(group => {
+      const names = group.members.map(r => r.label);
+      const domains = [...new Set(group.members.map(r => r.column.type.trim() || 'без домена'))];
+      const label = names.join(', ');
+      const input = el('input', {
+        type: 'text', maxlength: 200, class: 'mono', autocomplete: 'off', spellcheck: 'false',
+        list: diagram.dbms === 'PostgreSQL' ? 'pg-types' : null,
+        placeholder: group.suggestion || (group.indexed ? 'Например, varchar(20)' : 'Например, decimal(12,2)'),
+        oninput: e => { Conversion.setType(group, e.target.value); queueRedraw(); }
+      });
+      return el('div', { class: 'conversion-row' }, [field(label, input), el('p', { class: 'hint', text: 'Домены · ' + domains.join(', ') })]);
+    });
+    const action = await dialog({
+      title: 'Предпросмотр · ' + ERD.modelTitle(diagram),
+      body: [
+        field('Название новой модели', title), drawing,
+        el('p', { class: 'hint', text: countObjects(diagram.tables.length, diagram.kind) + ' · ' +
+          plural(ERD.buildIndex(diagram).edges.length, L.edgesN) }),
+        concept && relationshipFields.length ? el('details', { class: 'conversion-section', open: relationshipFields.length <= 5 }, [
+          el('summary', { text: 'Названия и кратности связей' }),
+          el('p', { class: 'hint', text: L.conceptLegend }),
+          el('div', { class: 'conversion-fields' }, relationshipFields)
+        ]) : null,
+        typeFields.length ? el('section', { class: 'conversion-section', 'aria-label': 'Уточнение типов' }, [
+          el('p', { text: 'Укажите SQL-типы для полей ниже. Связанные столбцы получают общий тип.' }),
+          el('div', { class: 'conversion-fields' }, typeFields)
+        ]) : null,
+        warnings.length ? el('details', { class: 'conversion-section', open: true }, [
+          el('summary', { text: 'Что проверить · ' + warnings.length }),
+          el('ul', { class: 'warns' }, warnings.map(w => el('li', { text: w })))
+        ]) : null
+      ],
+      buttons: [{ value: 'save', label: 'Создать отдельную модель', primary: true },
+        { value: 'back', label: 'Назад' }, { value: '', label: L.cancel }],
+      onOpen: dlg => {
+        dlg.classList.add('conversion-dialog');
+        preview.setDiagram({ ...diagram, view: null });
+        preview.vp.removeAttribute('transform');
+        redraw();
+      },
+      validate: v => {
+        if (v !== 'save') return null;
+        if (!title.value.trim()) return 'Введите название модели.';
+        if (pending.some(g => !g.type)) return diagram.dbms === 'MySQL 8.4'
+          ? 'Заполните SQL-типы. Для строковых ключей укажите, например, varchar(20).'
+          : 'Заполните SQL-типы перечисленных полей.';
+        return null;
+      }
+    });
+    cancelAnimationFrame(frame);
+    if (action === 'save') {
+      diagram.name = title.value.trim();
+      Conversion.applyTypes(types);
+      Conversion.layout(diagram, positions);
+    }
+    return action;
+  }
+
+  function cardinalitySelect(current, onChange) {
+    return el('select', { onchange: onChange ? e => onChange(e.target.value) : null },
+      ERD.CARDINALITIES.map(value => el('option', { value, text: value, selected: value === current })));
+  }
+
   async function newDiagram(withExample = false) {
     const kind = kindSelect(D.kind), name = el('input', { type: 'text', maxlength: 200 });
     const dbms = el('input', { type: 'text', value: 'PostgreSQL', maxlength: 80 });
@@ -1511,9 +1645,12 @@
       title: 'Новая модель БД',
       body: [field('Уровень модели', kind), hint, field('Название', name),
         el('label', { class: 'check' }, [useSample, 'Заполнить примером «Учёт успеваемости»']), dbmsField],
-      buttons: [{ value: 'ok', label: 'Создать', primary: true }, { value: '', label: L.cancel }],
+      buttons: [{ value: 'ok', label: 'Создать', primary: true },
+        ...(!withExample && D.kind === 'logical' && D.tables.length ? [{ value: 'convert', label: 'Построить из текущей…' }] : []),
+        { value: '', label: L.cancel }],
       onOpen: () => kind.focus()
     });
+    if (result === 'convert') { await convertDiagram(); return; }
     if (result !== 'ok') return;
     flushSave();
     const n = Store.list().length + 1;
@@ -1564,8 +1701,6 @@
     const second = relation?.to || toId || entities.find(t => t.id !== first)?.id || first;
     const entitySelect = current => el('select', {}, entities.map(t =>
       el('option', { value: t.id, text: t.name, selected: t.id === current })));
-    const cardinalitySelect = current => el('select', {}, ERD.CARDINALITIES.map(value =>
-      el('option', { value, text: value, selected: value === current })));
     const from = entitySelect(first), to = entitySelect(second);
     const fromCardinality = cardinalitySelect(relation?.fromCardinality || '1');
     const toCardinality = cardinalitySelect(relation?.toCardinality || '0..*');
@@ -1713,12 +1848,13 @@
   const menu = $('#file-menu'), fileBtn = $('#b-file');
   const ACTIONS = {
     import: pickFile, exportJson, exportHtml, exportSvg, exportPng, exportAll, exportReport, prompts: () => openPrompts(),
+    convert: convertDiagram,
     copy: () => copySelection(false), paste: () => pasteFromButton(), pasteJson: openPasteJson,
     lint: openLint, newDiagram: () => newDiagram(), sample: () => newDiagram(true), networkSample: loadSample,
     minimap: () => setMinimap(!prefs.minimap)
   };
   function renderMenu() {
-    const items = [['import', L.mImport], ['exportReport', 'Рисунок для отчёта…'], ['exportJson', L.mExportJson, 'Ctrl+S'], ['exportHtml', L.mExportHtml], ['exportSvg', L.mExportSvg],
+    const items = [['import', L.mImport], ['convert', 'Построить из текущей модели…'], ['exportReport', 'Рисунок для отчёта…'], ['exportJson', L.mExportJson, 'Ctrl+S'], ['exportHtml', L.mExportHtml], ['exportSvg', L.mExportSvg],
       ['exportPng', L.mExportPng], ['exportAll', L.mExportAll], '-', ['copy', L.mCopy, 'Ctrl+C'], ['paste', L.mPaste, 'Ctrl+V'],
       ['pasteJson', L.mPasteJson], '-', ['lint', L.mLint], ['newDiagram', L.mNewDiagram], ['sample', 'Учебный пример…'],
       ['networkSample', L.mSample], ['prompts', 'Промпты для моделей…'], '-', ['minimap', L.minimap]];
