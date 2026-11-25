@@ -66,8 +66,13 @@ var Model = (function () {
   }
 
   /* ---------- конструкторы ---------- */
-  function newDiagram(name) {
-    return { format: FORMAT, version: VERSION, id: uid(), name: name || S.newDiagramName, updatedAt: now(), view: null, groups: [], tables: [], notes: [] };
+  function newDiagram(name, kind, dbms) {
+    kind = ERD.modelKind(kind);
+    return {
+      format: FORMAT, version: VERSION, id: uid(), name: name || S.newDiagramName, kind,
+      dbms: kind === 'physical' ? dbms || 'PostgreSQL' : '',
+      updatedAt: now(), view: null, groups: [], tables: [], relationships: [], notes: []
+    };
   }
   function newGroup(title, groups) {
     const c = nextColor(groups || []);
@@ -77,10 +82,11 @@ var Model = (function () {
     o = o || {};
     return { name: name || '', type: type || '', pk: !!o.pk, unique: !!o.unique, nullable: !!o.nullable, ref: o.ref || null };
   }
-  function newTable(name, x, y, group) {
+  function newTable(name, x, y, group, kind) {
     return {
-      id: uid(), name, group: group || null, description: '', partitioned: false, uniques: [],
-      x: Math.round(x || 0), y: Math.round(y || 0), columns: [newColumn('id', 'bigint', { pk: true })]
+      id: uid(), name, group: group || null, description: '', partitioned: false, uniques: [], definitions: [],
+      x: Math.round(x || 0), y: Math.round(y || 0),
+      columns: kind === 'conceptual' ? [] : [newColumn('id', kind === 'physical' ? '' : 'Целое число', { pk: true })]
     };
   }
 
@@ -124,10 +130,12 @@ var Model = (function () {
     if (!isObj(c)) return null;
     let ref = null;
     if (isObj(c.ref) && str(c.ref.table)) ref = { table: str(c.ref.table, 200), column: c.ref.column == null || c.ref.column === '' ? null : str(c.ref.column, 200) };
-    return {
+    const column = {
       name: str(c.name, 200), type: str(c.type, 200),
       pk: !!c.pk, unique: !!c.unique, nullable: !!c.nullable && !c.pk, ref
     };
+    if (c.defaultValue) column.defaultValue = str(c.defaultValue, 500);
+    return column;
   }
 
   /* таблицы: id, группы, столбцы; ссылки остаются «как есть» — их проверяет checkRefs */
@@ -151,9 +159,10 @@ var Model = (function () {
       });
       const uniques = (Array.isArray(t.uniques) ? t.uniques : typeof t.uniques === 'string' ? [t.uniques] : [])
         .map(u => str(u, 500)).filter(u => u.trim());
+      const definitions = (Array.isArray(t.definitions) ? t.definitions : []).map(u => str(u, 1000)).filter(u => u.trim());
       const x = num(t.x), y = num(t.y);
       out.push({
-        id, name, group, description: str(t.description), partitioned: !!t.partitioned, uniques,
+        id, name, group, description: str(t.description), partitioned: !!t.partitioned, uniques, definitions,
         x: x == null ? null : Math.round(x * 100) / 100, y: y == null ? null : Math.round(y * 100) / 100, columns: cols
       });
     });
@@ -184,6 +193,19 @@ var Model = (function () {
     }));
   }
 
+  function normRelationships(raw, tables, idMap, warnings) {
+    if (!Array.isArray(raw)) return [];
+    const ids = new Set(tables.map(t => t.id)), byName = new Map(tables.map(t => [t.name, t.id]));
+    const resolve = v => idMap.get(v) || (ids.has(v) ? v : byName.get(v));
+    return raw.flatMap((r, i) => {
+      const from = isObj(r) && resolve(r.from), to = isObj(r) && resolve(r.to);
+      if (!from || !to || !ERD.CARDINALITIES.includes(r.fromCardinality) || !ERD.CARDINALITIES.includes(r.toCardinality)) {
+        warnings.push(fmt(S.wBadRelationship, { i: i + 1 }));
+        return [];
+      }
+      return [{ from, to, name: str(r.name, 160).trim() || S.defaultRelationship, fromCardinality: r.fromCardinality, toCardinality: r.toCardinality }];
+    });
+  }
 
   /* ---------- проверка схемы и автоисправление ---------- */
   const TYPE_ALIAS = {
@@ -211,24 +233,30 @@ var Model = (function () {
   /* → [{kind, t, ci, msg, fix?}]; fix() применяет исправление к диаграмме без побочных эффектов вне модели */
   function lint(d) {
     const issues = [], byId = new Map(d.tables.map(t => [t.id, t]));
+    const concept = d.kind === 'conceptual';
+    const postgresTypes = d.kind !== 'physical' || /postgresql/i.test(d.dbms);
+    const trimType = t => t.trim().toLowerCase().replace(/\s+/g, ' ');
+    const compareType = postgresTypes ? canonType : trimType;
+    const fkType = postgresTypes ? fkTypeFor : t => t.trim();
     d.tables.forEach(t => {
-      if (!t.columns.some(c => c.pk)) issues.push({ kind: 'noPk', t, ci: -1, msg: fmt(S.lNoPk, { t: t.name }) });
+      if (!concept && !t.columns.some(c => c.pk)) issues.push({ kind: 'noPk', t, ci: -1, msg: fmt(S.lNoPk, { t: t.name }) });
       const seen = new Map();
       t.columns.forEach((c, ci) => {
         const key = c.name.trim();
         if (key && seen.has(key)) {
           issues.push({
-            kind: 'dupCol', t, ci, msg: fmt(S.lDupCol, { t: t.name, c: c.name }),
+            kind: 'dupCol', t, ci, msg: fmt(concept ? S.lDupAttribute : S.lDupCol, { t: t.name, c: c.name }),
             fix: () => { const taken = new Set(t.columns.map(x => x.name)); c.name = uniqueName(c.name, taken).replace('_copy', '_'); }
           });
         } else if (key) seen.set(key, ci);
-        if (!c.ref) return;
+        if (concept || !c.ref) return;
         const r = ERD.resolveRef(byId, c.ref); if (!r) return;
-        const tc = r.to.columns[r.ti], target = r.to.name + '.' + tc.name;
+        const tc = r.to.columns[r.ti], target = r.to.name + '.' + tc.name, type = fkType(tc.type);
+        const fix = () => { c.type = fkType(tc.type); };
         if (!c.type.trim() && tc.type.trim()) {
-          issues.push({ kind: 'fkType', t, ci, msg: fmt(S.lFkEmpty, { t: t.name, c: c.name, target, to: fkTypeFor(tc.type) }), fix: () => { c.type = fkTypeFor(tc.type); } });
-        } else if (tc.type.trim() && canonType(c.type) !== canonType(fkTypeFor(tc.type))) {
-          issues.push({ kind: 'fkType', t, ci, msg: fmt(S.lFkType, { t: t.name, c: c.name, from: c.type, target, tt: tc.type, to: fkTypeFor(tc.type) }), fix: () => { c.type = fkTypeFor(tc.type); } });
+          issues.push({ kind: 'fkType', t, ci, msg: fmt(S.lFkEmpty, { t: t.name, c: c.name, target, to: type }), fix });
+        } else if (tc.type.trim() && compareType(c.type) !== compareType(type)) {
+          issues.push({ kind: 'fkType', t, ci, msg: fmt(S.lFkType, { t: t.name, c: c.name, from: c.type, target, tt: tc.type, to: type }), fix });
         }
         if (!tc.pk && !tc.unique) issues.push({ kind: 'fkTarget', t, ci, msg: fmt(S.lFkTarget, { t: t.name, c: c.name, target }) });
       });
@@ -286,9 +314,13 @@ var Model = (function () {
     if (isObj(raw.view) && num(raw.view.x) != null && num(raw.view.y) != null && num(raw.view.k) > 0) {
       view = { x: num(raw.view.x), y: num(raw.view.y), k: Math.min(ERD.C.MAX_K, Math.max(ERD.C.MIN_K, num(raw.view.k))) };
     }
+    const kind = ERD.modelKind(raw.kind);
+    if (raw.kind != null && raw.kind !== kind) warnings.push(S.wBadKind);
     const d = {
       format: FORMAT, version: VERSION, id: str(raw.id, 200) || uid(), name: str(raw.name, 200) || S.newDiagramName,
-      updatedAt: str(raw.updatedAt, 40) || now(), view, groups, tables, notes: normNotes(raw.notes)
+      kind, dbms: kind === 'physical' ? str(raw.dbms, 80).trim() || 'PostgreSQL' : '',
+      updatedAt: str(raw.updatedAt, 40) || now(), view, groups, tables, notes: normNotes(raw.notes),
+      relationships: kind === 'conceptual' ? normRelationships(raw.relationships, tables, idMap, warnings) : []
     };
     ensurePositions(d, warnings);
     lint(d).filter(i => i.fix && i.kind === 'fkType').forEach(i => { i.fix(); warnings.push(S.wAutoFixed + ' ' + i.msg); });
@@ -305,11 +337,13 @@ var Model = (function () {
   /* канонический объект для экспорта / сохранения */
   function toJSON(d) {
     return {
-      format: FORMAT, version: VERSION, id: d.id, name: d.name, updatedAt: d.updatedAt,
+      format: FORMAT, version: VERSION, id: d.id, name: d.name, kind: d.kind, updatedAt: d.updatedAt,
+      ...(d.kind === 'physical' ? { dbms: d.dbms } : {}),
       view: d.view ? { x: round2(d.view.x), y: round2(d.view.y), k: Math.round(d.view.k * 10000) / 10000 } : null,
       groups: d.groups.map(g => ({ id: g.id, title: g.title, color: g.color, colorDark: g.colorDark })),
       tables: d.tables.map(cloneTable),
-      notes: (d.notes || []).map(n => ({ id: n.id, text: n.text, x: round2(n.x), y: round2(n.y) }))
+      notes: (d.notes || []).map(n => ({ id: n.id, text: n.text, x: round2(n.x), y: round2(n.y) })),
+      ...(d.kind === 'conceptual' ? { relationships: d.relationships.map(r => ({ ...r })) } : {})
     };
   }
   const round2 = v => Math.round(v * 100) / 100;
@@ -317,7 +351,12 @@ var Model = (function () {
     return {
       id: t.id, name: t.name, group: t.group, description: t.description, partitioned: t.partitioned,
       uniques: t.uniques.slice(), x: round2(t.x), y: round2(t.y),
-      columns: t.columns.map(c => ({ name: c.name, type: c.type, pk: c.pk, unique: c.unique, nullable: c.nullable, ref: c.ref ? { table: c.ref.table, column: c.ref.column } : null }))
+      ...(t.definitions?.length ? { definitions: t.definitions.slice() } : {}),
+      columns: t.columns.map(c => ({
+        name: c.name, type: c.type, pk: c.pk, unique: c.unique, nullable: c.nullable,
+        ref: c.ref ? { table: c.ref.table, column: c.ref.column } : null,
+        ...(c.defaultValue ? { defaultValue: c.defaultValue } : {})
+      }))
     };
   }
 
@@ -362,21 +401,22 @@ var Model = (function () {
   }
 
   /* ---------- фрагменты (копирование / вставка) ---------- */
-  /* только связи, обе стороны которых входят в выделение */
-  function makeFragment(d, ids) {
+  /* При дублировании можно сохранить ссылки на таблицы вне выделения. */
+  function makeFragment(d, ids, keepExternalRefs = false) {
     const set = new Set(ids);
     const tables = d.tables.filter(t => set.has(t.id)).map(cloneTable);
-    tables.forEach(t => t.columns.forEach(c => { if (c.ref && !set.has(c.ref.table)) c.ref = null; }));
+    if (!keepExternalRefs) tables.forEach(t => t.columns.forEach(c => { if (c.ref && !set.has(c.ref.table)) c.ref = null; }));
     const gids = new Set(tables.map(t => t.group).filter(Boolean));
     return {
-      format: CLIP, version: VERSION, source: { diagram: d.id, name: d.name }, copiedAt: now(),
-      groups: d.groups.filter(g => gids.has(g.id)).map(g => Object.assign({}, g)), tables
+      format: CLIP, version: VERSION, kind: d.kind, source: { diagram: d.id, name: d.name }, copiedAt: now(),
+      groups: d.groups.filter(g => gids.has(g.id)).map(g => Object.assign({}, g)), tables,
+      relationships: d.relationships.filter(r => set.has(r.from) && set.has(r.to)).map(r => ({ ...r }))
     };
   }
   function normalizeFragment(raw, warnings) {
     warnings = warnings || [];
     if (!isObj(raw)) throw new ModelError(S.eNotObject);
-    if (raw.format === FORMAT) { const d = normalizeDiagram(raw, warnings).diagram; return { groups: d.groups, tables: d.tables }; }
+    if (raw.format === FORMAT) return normalizeDiagram(raw, warnings).diagram;
     if (raw.format !== CLIP) throw new ModelError(S.eFormat);
     if (num(raw.version) > VERSION) throw new ModelError(fmt(S.eVersion, { v: raw.version, max: VERSION }));
     const { groups, map } = normGroups(raw.groups, warnings);
@@ -386,7 +426,8 @@ var Model = (function () {
     tables.forEach(t => t.columns.forEach(c => { if (c.ref && !ids.has(c.ref.table)) c.ref = null; }));
     checkRefs(tables, warnings);
     let x = 0; tables.forEach(t => { if (t.x == null || t.y == null) { t.x = x; t.y = 0; x += ERD.C.W + ERD.C.GAP; } });
-    return { groups, tables };
+    const kind = ERD.modelKind(raw.kind);
+    return { kind, groups, tables, relationships: kind === 'conceptual' ? normRelationships(raw.relationships, tables, idMap, warnings) : [] };
   }
 
   function uniqueName(name, taken) {
@@ -428,7 +469,7 @@ var Model = (function () {
     /* сдвиг: центр фрагмента → pos, без точного наложения на существующие таблицы */
     if (tables.length && pos) {
       const x0 = Math.min(...tables.map(t => t.x)), y0 = Math.min(...tables.map(t => t.y));
-      const x1 = Math.max(...tables.map(t => t.x + ERD.tableWidth(t))), y1 = Math.max(...tables.map(t => t.y + ERD.tableHeight(t)));
+      const x1 = Math.max(...tables.map(t => t.x + ERD.tableWidth(t, d.kind))), y1 = Math.max(...tables.map(t => t.y + ERD.tableHeight(t, d.kind)));
       let dx = pos.x - (x0 + x1) / 2, dy = pos.y - (y0 + y1) / 2;
       if (opts.snap) { dx = Math.round(dx / opts.snap) * opts.snap; dy = Math.round(dy / opts.snap) * opts.snap; }
       const occupied = new Set(d.tables.map(t => Math.round(t.x) + ',' + Math.round(t.y)));
@@ -437,6 +478,7 @@ var Model = (function () {
       tables.forEach(t => { t.x = Math.round(t.x + dx); t.y = Math.round(t.y + dy); });
     }
     tables.forEach(t => d.tables.push(t));
+    frag.relationships.forEach(r => d.relationships.push({ ...r, from: idMap.get(r.from), to: idMap.get(r.to) }));
     return { ids: tables.map(t => t.id), renamed, groupsCreated };
   }
 
@@ -444,6 +486,7 @@ var Model = (function () {
   function removeTables(d, ids) {
     const set = new Set(ids);
     d.tables = d.tables.filter(t => !set.has(t.id));
+    d.relationships = d.relationships.filter(r => !set.has(r.from) && !set.has(r.to));
     d.tables.forEach(t => t.columns.forEach(c => { if (c.ref && set.has(c.ref.table)) c.ref = null; }));
   }
   function renameColumn(d, t, i, name) {

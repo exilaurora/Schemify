@@ -37,13 +37,19 @@ function ERDCoreFactory() {
   };
   const THEME_KEY = 'erd:theme';
   const NS = 'http://www.w3.org/2000/svg';
+  const MODEL_KINDS = {
+    conceptual: { title: 'Концептуальная модель', hint: 'Сущности, атрибуты и кратности связей предметной области.' },
+    logical: { title: 'Логическая модель', hint: 'Таблицы, домены, ключи и ограничения целостности.' },
+    physical: { title: 'Физическая модель', hint: 'Типы SQL, значения по умолчанию, индексы и ограничения выбранной СУБД.' }
+  };
+  const modelKind = kind => Object.hasOwn(MODEL_KINDS, kind) ? kind : 'logical';
+  const modelTitle = d => MODEL_KINDS[modelKind(d.kind)].title + (d.kind === 'physical' && d.dbms ? ' · ' + d.dbms : '');
+  const CARDINALITIES = ['0..1', '1', '0..*', '1..*'];
 
   /* ---------- СЛОВАРЬ СТРОК (весь интерфейс) ---------- */
   const STR = {
     appTitle: 'Schemify',
     appTagline: 'редактор ER-диаграмм',
-    schemaSuffix: 'схема БД',
-    viewerSubtitle: 'схема БД',
     search: 'Поиск',
     searchPh: 'Поиск таблицы или поля…',
     fit: 'По размеру',
@@ -59,7 +65,15 @@ function ERDCoreFactory() {
     refsIn: 'На неё ссылаются',
     nullAllowed: '  (NULL допускается)',
     tablesN: ['таблица', 'таблицы', 'таблиц'],
+    entitiesN: ['сущность', 'сущности', 'сущностей'],
     edgesN: ['связь', 'связи', 'связей'],
+    attributes: 'Атрибуты',
+    relationships: 'Связи',
+    defaultRelationship: 'Связь',
+    conceptLegend: 'Число у сущности показывает, сколько её экземпляров связано с одним экземпляром на другом конце.',
+    conceptRanges: '0..1: ноль или один · 1: ровно один · 0..*: любое количество · 1..*: один или больше',
+    wBadRelationship: 'Связь №{i} пропущена: проверьте сущности и кратности.',
+    wBadKind: 'Неизвестный уровень модели. Открыта логическая модель.',
     legendTitle: 'Как читать',
     legendNotNull: 'связь FK (NOT NULL)',
     legendNull: 'FK допускает NULL',
@@ -102,7 +116,7 @@ function ERDCoreFactory() {
     mCopy: 'Копировать',
     mPaste: 'Вставить',
     mPasteJson: 'Вставить из JSON…',
-    mSample: 'Загрузить пример',
+    mSample: 'Пример сетевого мониторинга',
     mNewDiagram: 'Новая диаграмма',
 
     /* боковая панель диаграмм */
@@ -165,7 +179,7 @@ function ERDCoreFactory() {
     /* справка в левой панели */
     helpControls: 'Управление',
     helpKeys: 'Горячие клавиши',
-    helpAi: 'Нейросеть: импорт и экспорт схемы БД',
+    helpAi: 'Промпты и импорт ответа',
     controls: [
       ['Двигать схему', 'тянуть средней кнопкой мыши · два пальца по тачпаду · Shift+колесо — по горизонтали · на телефоне и планшете — один палец по фону'],
       ['Масштаб на экране', 'двойное касание — приблизить; двойное касание и тянуть вниз/вверх — плавно приблизить/отдалить; в режиме «Просмотр» — ещё и щипок двумя пальцами'],
@@ -178,6 +192,7 @@ function ERDCoreFactory() {
       ['Контекстное меню', 'правый клик по фону, таблице, столбцу или группе — быстрые действия'],
       ['Переименовать', 'двойной клик по имени таблицы, столбцу или заголовку группы'],
       ['Связь FK', 'тянуть кружок ● справа у строки столбца на другую таблицу (на её PK или нужную строку)'],
+      ['Концептуальная модель', 'кнопка «Связи»: выбрать две сущности, указать название и кратность с обеих сторон'],
       ['Свойства', 'панель справа: столбцы, типы, PK/UQ/NULL, FK, UNIQUE, описание; ⋮⋮ — порядок столбцов'],
       ['Группы', 'кнопка «Группы»: название, цвета для светлой и тёмной темы, удаление'],
       ['Диаграммы', 'клик по диаграмме в списке — меню (открыть, экспорт, переименовать, дублировать, удалить); двойной клик — открыть'],
@@ -186,97 +201,20 @@ function ERDCoreFactory() {
     ],
     keys: [
       ['Ctrl+Z', 'отменить'], ['Ctrl+Shift+Z, Ctrl+Y', 'повторить'],
-      ['Ctrl+C / Ctrl+X / Ctrl+V', 'копировать / вырезать / вставить таблицы'],
-      ['N', 'новая таблица под курсором'], ['Ctrl+D', 'дублировать выделенное'], ['Ctrl+A', 'выделить все видимые (в режиме правки)'],
+      ['Ctrl+C / Ctrl+X / Ctrl+V', 'копировать / вырезать / вставить таблицы или сущности'],
+      ['N', 'новая таблица или сущность под курсором'], ['Ctrl+D', 'дублировать выделенное'], ['Ctrl+A', 'выделить все видимые (в режиме правки)'],
       ['Delete, Backspace', 'удалить выделенное'], ['Ctrl+S', 'экспорт JSON'],
       ['Ctrl+F', 'поиск (Enter — следующее совпадение)'], ['F', 'схема по размеру окна'],
       ['Esc', 'снять выделение, отменить перетаскивание'], ['Enter / Esc', 'в поле ввода — применить / выйти'],
       ['Alt+↑ / Alt+↓', 'на ⋮⋮ столбца — сдвинуть столбец']
     ],
     keysNote: 'На macOS вместо Ctrl — Cmd. Клавиши работают в любой раскладке и не перехватываются, пока курсор в поле ввода.',
-    aiIntro: 'Скопируйте промпт, вставьте в ChatGPT, Claude и т.п. вместе со своей схемой — и получите результат.',
-    aiToJsonTitle: 'БД → JSON для импорта',
-    aiToJsonText: 'Из .sql, моделей SQLAlchemy / Django / Prisma — в файл для этого редактора.',
-    aiFromJsonTitle: 'JSON → схема БД',
-    aiFromJsonText: 'Из диаграммы — в SQL DDL (PostgreSQL) или модели SQLAlchemy 2.0.',
     aiCopy: 'Копировать промпт',
-    aiCopyWithJson: 'Копировать с текущей схемой',
-    aiShow: 'Показать',
     aiImport: 'Импортировать ответ…',
     aiCopied: 'Промпт скопирован',
     aiImportTitle: 'Импорт ответа нейросети',
     aiImportHelp: 'Вставьте JSON, который вернула нейросеть (обёртку ```json можно не убирать).',
     aiImportBtn: 'Импортировать',
-    promptToJson: `Ты — конвертер схем баз данных. Преобразуй схему БД, приложенную в конце (SQL DDL, модели SQLAlchemy / Django / Prisma или текстовое описание; может быть несколько файлов), в JSON для импорта в Schemify (редактор ER-диаграмм).
-
-Верни ТОЛЬКО JSON одним блоком, без пояснений.
-
-Формат:
-{
-  "format": "erd-generator",
-  "version": 1,
-  "name": "<название схемы>",
-  "groups": [
-    { "id": "<латиница, цифры, _ или ->", "title": "<название группы>", "color": "#rrggbb" }
-  ],
-  "tables": [
-    {
-      "id": "<уникальный id таблицы, например t_users>",
-      "name": "<имя таблицы как в БД>",
-      "group": "<id группы или null>",
-      "description": "<что хранит таблица; возьми из COMMENT, docstring или придумай кратко по смыслу>",
-      "partitioned": false,
-      "uniques": ["UNIQUE(col_a, col_b)"],
-      "columns": [
-        { "name": "id", "type": "bigint", "pk": true, "unique": false, "nullable": false, "ref": null },
-        { "name": "user_id", "type": "bigint", "pk": false, "unique": false, "nullable": false,
-          "ref": { "table": "<id целевой таблицы>", "column": null } }
-      ]
-    }
-  ]
-}
-
-Правила:
-1. Не указывай x, y и view — редактор расставит таблицы сам.
-2. ref.table — это id таблицы из этого же JSON, а не её имя. ref.column = null означает ссылку на первичный ключ; имя столбца указывай, только если внешний ключ ссылается не на PK.
-3. Составной первичный ключ — pk: true у каждого столбца ключа. Одиночный UNIQUE — флаг unique: true; составной — строка "UNIQUE(a, b)" в uniques.
-4. nullable: true только если столбец допускает NULL (в SQLAlchemy — nullable=True или Mapped[Optional[...]] / Mapped[... | None]). Столбцы PK всегда nullable: false.
-5. type — тип PostgreSQL в нижнем регистре: bigint, int, smallint, text, varchar(255), numeric(12,2), bool, date, timestamptz, jsonb, uuid, inet… Типы SQLAlchemy переводи: Integer → int, BigInteger → bigint, SmallInteger → smallint, String(n) → varchar(n), Text → text, Boolean → bool, DateTime(timezone=True) → timestamptz, DateTime → timestamp, Date → date, Numeric(p, s) → numeric(p,s), Float → real, JSON/JSONB → jsonb, UUID → uuid, Enum → text (или имя enum-типа), LargeBinary → bytea.
-6. Таблицы с PARTITION BY — partitioned: true.
-7. Таблицы связей многие-ко-многим (association tables, Table(...)) включай как обычные таблицы.
-8. Разбей таблицы на 3–8 смысловых групп (справочники, пользователи, заказы и т.п.) с различимыми цветами, например #2f7dd1, #1f9d7a, #d98a1c, #d0473f, #8a5cd6, #c2497d, #5f8f2f, #6f7f9c. Если группировка не нужна — group: null и пустой groups.
-9. Ничего не выдумывай: только таблицы, столбцы и связи из исходника. Если файлов несколько — объедини всё в одну схему.
-
-Схема БД:
-<вставьте сюда содержимое .sql или .py-файлов>`,
-    promptFromJson: `Ты — опытный разработчик баз данных. Ниже — JSON-описание схемы БД из Schemify (редактор ER-диаграмм) (формат erd-generator). Сгенерируй по нему: <ВЫБЕРИ: PostgreSQL DDL (.sql) | модели SQLAlchemy 2.0 (.py)>.
-
-Как читать JSON:
-- tables[] — таблицы: name — имя, description — комментарий к таблице, group — id логического раздела из groups[].
-- columns[] — столбцы по порядку: name, type (тип PostgreSQL), pk, unique, nullable.
-- ref — внешний ключ: ref.table — id целевой таблицы (найди в tables[] таблицу с таким id), ref.column — столбец в ней; null — первичный ключ целевой таблицы.
-- Несколько столбцов с pk: true — составной первичный ключ.
-- uniques — составные ограничения UNIQUE(...), переносить как есть.
-- partitioned: true — секционированная таблица (PARTITION BY RANGE по подходящему столбцу времени; если столбец неочевиден — оставь TODO-комментарий).
-- x, y, view, color, colorDark — данные раскладки на холсте, игнорируй.
-
-Требования для SQL:
-- CREATE TABLE в порядке зависимостей; для циклических ссылок — ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY после создания таблиц.
-- NOT NULL по nullable: false, PRIMARY KEY, UNIQUE, REFERENCES; индексы на столбцы внешних ключей.
-- COMMENT ON TABLE из description; группы — комментариями-разделителями.
-- Тип tstz означает timestamptz.
-
-Требования для SQLAlchemy 2.0:
-- DeclarativeBase, Mapped[...] и mapped_column(...), ForeignKey(...), Optional[...] для nullable-столбцов.
-- relationship(...) с back_populates для обеих сторон каждой связи; для таблиц «многие-ко-многим» из двух FK — secondary.
-- UniqueConstraint и составные PK — через __table_args__; description — в docstring класса.
-- Типы: bigint → BigInteger, int → Integer, text → Text, varchar(n) → String(n), bool → Boolean, timestamptz/tstz → DateTime(timezone=True), jsonb → JSONB, uuid → Uuid, inet → INET и т.д.
-
-Не добавляй таблиц и столбцов, которых нет в JSON. Верни только код.
-
-JSON схемы:
-<вставьте сюда JSON — кнопка «Копировать с текущей схемой» подставляет его автоматически>`,
-    promptJsonPlaceholder: '<вставьте сюда JSON — кнопка «Копировать с текущей схемой» подставляет его автоматически>',
 
     /* контекстное меню холста (правый клик) */
     cmAddTable: 'Добавить таблицу',
@@ -389,6 +327,7 @@ JSON схемы:
     lintFixed: 'Исправлено: {n}',
     lNoPk: 'Таблица {t} без первичного ключа',
     lDupCol: 'Таблица {t}: повторяется столбец «{c}»',
+    lDupAttribute: 'Сущность «{t}»: повторяется атрибут «{c}»',
     lFkEmpty: '{t}.{c} → {target}: тип не задан, будет {to}',
     lFkType: '{t}.{c} ({from}) → {target} ({tt}): типы не совпадают, будет {to}',
     lFkTarget: '{t}.{c} ссылается на {target}, который не PK и не unique',
@@ -488,6 +427,11 @@ button:hover{border-color:var(--muted)}
 .emark{fill:var(--edge);fill-opacity:.7}
 .emark.hl{fill:var(--c);fill-opacity:1}
 .emark.dim{fill-opacity:.06}
+.reltext{fill:var(--text);stroke:var(--bg);stroke-width:3;paint-order:stroke;stroke-linejoin:round;
+  font:600 11px system-ui,sans-serif;text-anchor:middle;pointer-events:none}
+.reltext.dim{opacity:.16}
+.edge.concept{stroke-opacity:.85}
+.edge.concept.dim{stroke-opacity:.06}
 .hit{fill:none;stroke:transparent;stroke-width:12;pointer-events:stroke}
 @keyframes flow{to{stroke-dashoffset:-24}}
 @media (prefers-reduced-motion:reduce){.edge.hl{animation:none}}
@@ -596,17 +540,21 @@ button:hover{border-color:var(--muted)}
     return w;
   }
   const uniquesOf = t => (t.uniques || []).filter(u => u && String(u).trim());
-  function tableHeight(t) {
-    const u = uniquesOf(t).length;
-    return C.HEAD + t.columns.length * C.ROW + (u ? C.FOOT + u * C.UQ_LINE : C.FOOT);
+  const tableNotes = (t, kind) => kind === 'conceptual' ? [] :
+    uniquesOf(t).concat(kind === 'physical' ? (t.definitions || []).filter(s => s.trim()) : []);
+  const columnType = (c, kind) => (c.type || '') + (kind === 'physical' && c.defaultValue ? ' DEFAULT ' + c.defaultValue : '');
+  function tableHeight(t, kind) {
+    return C.HEAD + t.columns.length * C.ROW + C.FOOT + tableNotes(t, kind).length * C.UQ_LINE;
   }
-  function tableWidth(t) {
-    let w = C.W;
-    w = Math.max(w, 12 + measure(t.name, FONT.name) + (t.partitioned ? 100 : 14));
+  function tableWidth(t, kind) {
+    const concept = kind === 'conceptual';
+    let w = Math.max(concept ? 180 : C.W, 12 + measure(t.name, FONT.name) + (!concept && t.partitioned ? 100 : 14));
     t.columns.forEach(c => {
-      w = Math.max(w, 50 + measure(c.name + (c.nullable ? '?' : ''), FONT.col) + 16 + measure(c.type || '', FONT.type) + 10);
+      const width = concept ? 24 + measure(c.name, FONT.col) :
+        76 + measure(c.name + (c.nullable ? '?' : ''), FONT.col) + measure(columnType(c, kind), FONT.type);
+      w = Math.max(w, width);
     });
-    uniquesOf(t).forEach(u => { w = Math.max(w, 20 + measure(u, FONT.foot)); });
+    tableNotes(t, kind).forEach(u => { w = Math.max(w, 20 + measure(u, FONT.foot)); });
     return Math.ceil(w);
   }
 
@@ -620,13 +568,31 @@ button:hover{border-color:var(--muted)}
   function buildIndex(d) {
     const byId = new Map(), neigh = new Map(), fk = new Set(), edges = [], broken = [];
     d.tables.forEach(t => { byId.set(t.id, t); neigh.set(t.id, new Set()); });
-    d.tables.forEach(t => t.columns.forEach((c, i) => {
+    const connect = e => {
+      edges.push(e);
+      neigh.get(e.from.id).add(e.to.id); neigh.get(e.to.id).add(e.from.id);
+    };
+    if (d.kind === 'conceptual') {
+      const parallel = new Map();
+      (d.relationships || []).forEach(relation => {
+        const from = byId.get(relation.from), to = byId.get(relation.to);
+        if (!from || !to) return;
+        const key = JSON.stringify([from.id, to.id].sort());
+        if (!parallel.has(key)) parallel.set(key, []);
+        const edge = { from, to, relation };
+        parallel.get(key).push(edge);
+        connect(edge);
+      });
+      parallel.forEach(list => list.forEach((edge, i) => {
+        edge.lane = i;
+        edge.offset = i - (list.length - 1) / 2;
+      }));
+    } else d.tables.forEach(t => t.columns.forEach((c, i) => {
       if (!c.ref) return;
       const r = resolveRef(byId, c.ref);
       if (!r) { broken.push({ t, i }); return; }
-      edges.push({ from: t, fi: i, to: r.to, ti: r.ti, nullable: !!c.nullable });
+      connect({ from: t, fi: i, to: r.to, ti: r.ti, nullable: !!c.nullable });
       fk.add(t.id + '\u0000' + i);
-      neigh.get(t.id).add(r.to.id); neigh.get(r.to.id).add(t.id);
     }));
     return { byId, edges, neigh, fk, broken };
   }
@@ -655,12 +621,13 @@ button:hover{border-color:var(--muted)}
     /* раскладка одного блока в координатах (0,0); возвращает размеры */
     const block = k => {
       const ts = members.get(k), n = ncolsOf(k);
-      const colW = Math.max(C.W, ...ts.map(tableWidth)), step = g(colW + C.GAP);
+      const gap = d.kind === 'conceptual' ? 92 : C.GAP;
+      const colW = Math.max(...ts.map(t => tableWidth(t, d.kind))), step = g(colW + gap);
       const colY = Array(n).fill(g(C.GHEAD)), pos = [];
       ts.forEach(t => {
         const ci = colY.indexOf(Math.min(...colY));
         pos.push([t, g(C.GPAD) + ci * step, colY[ci]]);
-        colY[ci] += g(tableHeight(t) + C.GAP);
+        colY[ci] += g(tableHeight(t, d.kind) + gap);
       });
       return { pos, w: g(C.GPAD) + (n - 1) * step + colW + C.GPAD, h: Math.max(...colY) };
     };
@@ -714,7 +681,7 @@ button:hover{border-color:var(--muted)}
       this.d = d;
       if (!Array.isArray(d.notes)) d.notes = [];
       if (!d.view || !isFinite(d.view.x) || !isFinite(d.view.y) || !(d.view.k > 0)) d.view = { x: 0, y: 0, k: 1 };
-      this.st.selected.clear(); this.st.hovered = null;
+      this.st.selected.clear(); this.st.hovered = null; this.st.note = null;
       this.rebuild(); this.applyView();
     }
     /* полная (ids не задан) или частичная перерисовка карточек; связи и группы — всегда */
@@ -753,13 +720,14 @@ button:hover{border-color:var(--muted)}
       if (g) g.setAttribute('transform', `translate(${n.x} ${n.y})`);
     }
     _node(t, replace) {
-      const w = tableWidth(t), h = tableHeight(t), fk = this.idx.fk;
+      const kind = this.d.kind, concept = kind === 'conceptual';
+      const w = tableWidth(t, kind), h = tableHeight(t, kind), fk = this.idx.fk;
       const g = mk('g', { class: 'node', 'data-id': t.id });
       g.style.setProperty('--c', colorVar(t.group));
       mk('rect', { class: 'body', width: w, height: h, rx: C.R }, g);
       mk('path', { class: 'head', d: `M0 8a8 8 0 0 1 8-8h${w - 16}a8 8 0 0 1 8 8v${C.HEAD - 8}H0z` }, g);
       mk('text', { class: 'tname', x: 12, y: 20 }, g).textContent = t.name;
-      if (t.partitioned) {
+      if (!concept && t.partitioned) {
         mk('rect', { class: 'pbg', x: w - 92, y: 8, width: 82, height: 15, rx: 7 }, g);
         mk('text', { class: 'pbadge', x: w - 51, y: 19, 'text-anchor': 'middle' }, g).textContent = STR.partitioned;
       }
@@ -767,14 +735,15 @@ button:hover{border-color:var(--muted)}
         const ry = C.HEAD + i * C.ROW, isFk = fk.has(t.id + '\u0000' + i);
         const r = mk('g', { class: 'row', 'data-i': i }, g);
         mk('rect', { class: 'rowhl', x: 1, y: ry, width: w - 2, height: C.ROW }, r);
-        const flags = [];
-        if (c.pk) flags.push('PK'); if (isFk) flags.push('FK'); if (c.unique) flags.push('UQ');
-        mk('text', { class: 'flag ' + (flags[0] === 'PK' ? 'pk' : flags[0] === 'FK' ? 'fk' : ''), x: 8, y: ry + 14 }, r).textContent = flags.join('·');
-        mk('text', { class: 'cn' + (isFk ? ' fkc' : ''), x: 50, y: ry + 14.5 }, r).textContent = c.name + (c.nullable ? '?' : '');
-        mk('text', { class: 'ct', x: w - 10, y: ry + 14 }, r).textContent = c.type || '';
-        if (this.opts.ports) mk('circle', { class: 'port', cx: w, cy: ry + C.ROW / 2, r: 5 }, r);
+        mk('text', { class: 'cn' + (isFk ? ' fkc' : ''), x: concept ? 12 : 50, y: ry + 14.5 }, r).textContent = c.name + (!concept && c.nullable ? '?' : '');
+        if (!concept) {
+          const flags = [c.pk && 'PK', isFk && 'FK', c.unique && 'UQ'].filter(Boolean);
+          mk('text', { class: 'flag ' + (flags[0] === 'PK' ? 'pk' : flags[0] === 'FK' ? 'fk' : ''), x: 8, y: ry + 14 }, r).textContent = flags.join('·');
+          mk('text', { class: 'ct', x: w - 10, y: ry + 14 }, r).textContent = columnType(c, kind);
+          if (this.opts.ports) mk('circle', { class: 'port', cx: w, cy: ry + C.ROW / 2, r: 5 }, r);
+        }
       });
-      uniquesOf(t).forEach((u, i) => {
+      tableNotes(t, kind).forEach((u, i) => {
         mk('text', { class: 'foot', x: 10, y: C.HEAD + t.columns.length * C.ROW + 13 + i * C.UQ_LINE }, g).textContent = u;
       });
       if (replace) this.nl.replaceChild(g, replace); else this.nl.appendChild(g);
@@ -801,13 +770,25 @@ button:hover{border-color:var(--muted)}
       this.el.textContent = ''; this.edgesBy = new Map();
       this.edges = this.idx.edges;
       this.edges.forEach(e => {
-        e.path = mk('path', { class: 'edge' + (e.nullable ? ' nl' : '') }, this.el);
+        e.path = mk('path', { class: 'edge' + (e.relation ? ' concept' : e.nullable ? ' nl' : '') }, this.el);
         e.hit = mk('path', { class: 'hit' }, this.el);
-        e.m1 = mk('circle', { class: 'emark', r: 3.6 }, this.el);
-        e.m2 = mk('rect', { class: 'emark', width: 2.4, height: 11, y: -5.5, rx: 1 }, this.el);
-        mk('title', {}, e.hit).textContent = `${e.from.name}.${e.from.columns[e.fi].name} → ${e.to.name}.${e.to.columns[e.ti].name}` + (e.nullable ? STR.nullAllowed : '');
+        if (e.relation) {
+          e.marks = [e.relation.fromCardinality, e.relation.toCardinality, e.relation.name].map(text => {
+            const label = mk('text', { class: 'reltext' }, this.el);
+            label.textContent = text;
+            return label;
+          });
+        } else {
+          e.marks = [
+            mk('circle', { class: 'emark', r: 3.6 }, this.el),
+            mk('rect', { class: 'emark', width: 2.4, height: 11, rx: 1 }, this.el)
+          ];
+        }
+        mk('title', {}, e.hit).textContent = e.relation
+          ? `${e.from.name} (${e.relation.fromCardinality}) · ${e.relation.name} · ${e.to.name} (${e.relation.toCardinality})`
+          : `${e.from.name}.${e.from.columns[e.fi].name} → ${e.to.name}.${e.to.columns[e.ti].name}` + (e.nullable ? STR.nullAllowed : '');
         const c = colorVar(e.to.group);
-        e.path.style.setProperty('--c', c); e.m1.style.setProperty('--c', c); e.m2.style.setProperty('--c', c);
+        [e.path, ...e.marks].forEach(x => x.style.setProperty('--c', c));
         [e.from.id, e.to.id].forEach(id => {
           if (!this.edgesBy.has(id)) this.edgesBy.set(id, []);
           const a = this.edgesBy.get(id); if (a[a.length - 1] !== e) a.push(e);
@@ -819,6 +800,7 @@ button:hover{border-color:var(--muted)}
     place(t) { const n = this.nodes.get(t.id); if (n) n.g.setAttribute('transform', `translate(${t.x},${t.y})`); }
     geom(e) {
       const A = this.nodes.get(e.from.id), B = this.nodes.get(e.to.id);
+      if (e.relation) return this.relationshipGeom(e, A, B);
       const y1 = e.from.y + C.HEAD + e.fi * C.ROW + C.ROW / 2, y2 = e.to.y + C.HEAD + e.ti * C.ROW + C.ROW / 2;
       const fl = e.from.x, fr = fl + A.w, tl = e.to.x, tr = tl + B.w; let s1, s2;
       if (fr + 12 <= tl) { s1 = 1; s2 = -1; } else if (tr + 12 <= fl) { s1 = -1; s2 = 1; } else { s1 = 1; s2 = 1; }
@@ -826,11 +808,83 @@ button:hover{border-color:var(--muted)}
       const d = s1 === s2 ? 55 + Math.abs(y1 - y2) * 0.12 : Math.max(50, Math.abs(x2 - x1) / 2);
       return { x1, y1, x2, y2, d: `M${x1} ${y1}C${x1 + s1 * d} ${y1},${x2 + s2 * d} ${y2},${x2} ${y2}` };
     }
+    relationshipSides(e, a, b) {
+      const f = e.from, t = e.to;
+      if (f === t) return ['right', 'right'];
+      if (f.x + a.w <= t.x) return ['right', 'left'];
+      if (t.x + b.w <= f.x) return ['left', 'right'];
+      if (f.y + a.h + 12 <= t.y) return ['bottom', 'top'];
+      if (t.y + b.h + 12 <= f.y) return ['top', 'bottom'];
+      return ['right', 'right'];
+    }
+    placeRelationshipEnds() {
+      const sides = new Map();
+      this.edges.forEach(e => {
+        const a = this.nodes.get(e.from.id), b = this.nodes.get(e.to.id);
+        e.sides = this.relationshipSides(e, a, b);
+        e.ends = [];
+        e.sides.forEach((side, i) => {
+          const [t, other, box, otherBox] = i === 0 ? [e.from, e.to, a, b] : [e.to, e.from, b, a];
+          const vertical = side === 'top' || side === 'bottom';
+          const key = JSON.stringify([t.id, side]);
+          if (!sides.has(key)) sides.set(key, []);
+          sides.get(key).push({
+            e, i, size: vertical ? box.w : box.h,
+            target: vertical ? other.x + otherBox.w / 2 : other.y + otherBox.h / 2
+          });
+        });
+      });
+      sides.forEach(list => list.sort((a, b) => a.target - b.target).forEach(({ e, i, size }, index) => {
+        const padding = Math.min(14, size / 4);
+        e.ends[i] = padding + (size - 2 * padding) * (index + 1) / (list.length + 1);
+      }));
+    }
+    relationshipGeom(e, a, b) {
+      const f = e.from, t = e.to;
+      const [first, second] = e.sides, [p1, p2] = e.ends;
+      if (f === t) {
+        const x = f.x + a.w, y1 = f.y + p1, y2 = f.y + p2, bend = 66 + e.lane * 54;
+        return {
+          d: `M${x} ${y1}C${x + bend} ${y1 - 18},${x + bend} ${y2 + 18},${x} ${y2}`,
+          labels: [[x + 16, y1 - 5], [x + 16, y2 + 12], [x + bend * .75, (y1 + y2) / 2 - 5]]
+        };
+      }
+      if (first === 'top' || first === 'bottom') {
+        const down = first === 'bottom';
+        const x1 = f.x + p1, x2 = t.x + p2;
+        const y1 = f.y + (down ? a.h : 0), y2 = t.y + (down ? 0 : b.h), mid = (y1 + y2) / 2;
+        return {
+          d: `M${x1} ${y1}C${x1} ${mid},${x2} ${mid},${x2} ${y2}`,
+          labels: [[x1 + 13, y1 + (down ? 14 : -6)], [x2 + 13, y2 + (down ? -6 : 14)],
+            [(x1 + x2) / 2, mid - 5 + e.offset * 13]]
+        };
+      }
+      const separatedX = first !== second;
+      const x1 = f.x + (first === 'right' ? a.w : 0), x2 = t.x + (second === 'right' ? b.w : 0);
+      const y1 = f.y + p1, y2 = t.y + p2;
+      const offset = e.offset * 10, mid = (x1 + x2) / 2;
+      const bend = separatedX ? mid : Math.max(x1, x2) + 60 + e.lane * 24;
+      return {
+        d: `M${x1} ${y1}C${bend} ${y1 + offset},${bend} ${y2 + offset},${x2} ${y2}`,
+        labels: [[x1 + (first === 'right' ? 16 : -16), y1 - 5], [x2 + (second === 'right' ? 16 : -16), y2 - 5],
+          [mid * .25 + bend * .75, (y1 + y2) / 2 + offset * .75 - 5]]
+      };
+    }
     drawEdges(list) {
+      if (this.d.kind === 'conceptual') {
+        this.placeRelationshipEnds();
+        list = this.edges;
+      }
       list.forEach(e => {
         const g = this.geom(e); e.path.setAttribute('d', g.d); e.hit.setAttribute('d', g.d);
-        e.m1.setAttribute('cx', g.x1); e.m1.setAttribute('cy', g.y1);
-        e.m2.setAttribute('x', g.x2 - 1.2); e.m2.setAttribute('y', g.y2 - 5.5);
+        if (g.labels) e.marks.forEach((label, i) => {
+          label.setAttribute('x', g.labels[i][0]); label.setAttribute('y', g.labels[i][1]);
+        });
+        else {
+          const [first, last] = e.marks;
+          first.setAttribute('cx', g.x1); first.setAttribute('cy', g.y1);
+          last.setAttribute('x', g.x2 - 1.2); last.setAttribute('y', g.y2 - 5.5);
+        }
       });
     }
     /* границы групп по видимым таблицам (exclude — множество id, которые не учитывать) */
@@ -902,9 +956,9 @@ button:hover{border-color:var(--muted)}
       }
       this.edges.forEach(e => {
         const vis = this.isVisible(e.from) && this.isVisible(e.to); if (vis) ve++;
-        [e.path, e.hit, e.m1, e.m2].forEach(x => { x.style.display = vis ? '' : 'none'; });
+        [e.path, e.hit, ...e.marks].forEach(x => { x.style.display = vis ? '' : 'none'; });
         const rel = !!focus && (focus.has(e.from.id) || focus.has(e.to.id));
-        [e.path, e.m1, e.m2].forEach(x => { x.classList.toggle('hl', rel); x.classList.toggle('dim', !!focus && !rel); });
+        [e.path, ...e.marks].forEach(x => { x.classList.toggle('hl', rel); x.classList.toggle('dim', !!focus && !rel); });
       });
       const stats = { tables: vt, edges: ve, matches };
       if (this.opts.onStats) this.opts.onStats(stats);
@@ -1171,15 +1225,25 @@ button:hover{border-color:var(--muted)}
     /* границы видимых таблиц с отступом под рамки групп */
     bounds(onlyIds) {
       const ts = this.d.tables.filter(t => this.isVisible(t) && this.nodes.has(t.id) && (!onlyIds || onlyIds.has(t.id)));
-      const notes = onlyIds ? [] : this.d.notes || [];
-      if (!ts.length && !notes.length) return null;
-      const nb = notes.map(n => { const bb = this.tl.querySelector(`[data-nid="${n.id}"]`).getBBox(); return { x0: n.x - 10, y0: n.y - 10, x1: n.x + bb.width + 10, y1: n.y + bb.height + 10 }; });
-      return {
-        x0: Math.min(...ts.map(t => t.x - C.GPAD - 10), ...nb.map(r => r.x0)),
-        y0: Math.min(...ts.map(t => t.y - C.GHEAD - 10), ...nb.map(r => r.y0)),
-        x1: Math.max(...ts.map(t => t.x + this.nodes.get(t.id).w + C.GPAD + 10), ...nb.map(r => r.x1)),
-        y1: Math.max(...ts.map(t => t.y + this.nodes.get(t.id).h + C.GPAD + 10), ...nb.map(r => r.y1))
+      const withNotes = !onlyIds && this.tl.childElementCount > 0;
+      if (!ts.length && !withNotes) return null;
+      const b = {
+        x0: Math.min(...ts.map(t => t.x)) - C.GPAD - 10,
+        y0: Math.min(...ts.map(t => t.y)) - C.GHEAD - 10,
+        x1: Math.max(...ts.map(t => t.x + this.nodes.get(t.id).w)) + C.GPAD + 10,
+        y1: Math.max(...ts.map(t => t.y + this.nodes.get(t.id).h)) + C.GPAD + 10
       };
+      const layers = [];
+      if (withNotes) layers.push(this.tl);
+      if (!onlyIds && this.d.kind === 'conceptual' && this.edges.length) layers.push(this.el);
+      for (const layer of layers) {
+        const box = layer.getBBox();
+        if (box.width || box.height) {
+          b.x0 = Math.min(b.x0, box.x - 10); b.y0 = Math.min(b.y0, box.y - 10);
+          b.x1 = Math.max(b.x1, box.x + box.width + 10); b.y1 = Math.max(b.y1, box.y + box.height + 10);
+        }
+      }
+      return b;
     }
     fit(m) {
       m = Object.assign({ top: 0, left: 0, right: 0, bottom: 0 }, m);
@@ -1224,23 +1288,35 @@ button:hover{border-color:var(--muted)}
       class: 'lnk', href: '#',
       onclick: ev => { ev.preventDefault(); onLink(target); }
     }, [target.name + ' ', el('span', { text: txt })]);
+    const concept = d.kind === 'conceptual';
+    const related = idx.edges.filter(e => e.relation && (e.from === t || e.to === t));
     append(pc, [
       el('h2', { text: t.name }),
-      el('div', { class: 'g', style: { '--c': colorVar(t.group) }, text: (g ? g.title : STR.noGroup) + (t.partitioned ? STR.partSuffix : '') }),
+      el('div', { class: 'g', style: { '--c': colorVar(t.group) }, text: (g ? g.title : STR.noGroup) + (!concept && t.partitioned ? STR.partSuffix : '') }),
       t.description ? el('p', { text: t.description }) : null,
-      el('h3', { text: STR.columns }),
+      el('h3', { text: concept ? STR.attributes : STR.columns }),
       el('table', {}, t.columns.map((c, i) => {
+        if (concept) return el('tr', {}, el('td', { text: c.name }));
         const fl = [c.pk && 'PK', idx.fk.has(t.id + '\u0000' + i) && 'FK', c.unique && 'UQ', c.nullable && 'NULL'].filter(Boolean).join(' ');
-        return el('tr', {}, [el('td', { text: c.name }), el('td', { text: c.type || '' }), el('td', { text: fl })]);
+        return el('tr', {}, [el('td', { text: c.name }), el('td', { text: columnType(c, d.kind) }), el('td', { text: fl })]);
       })),
-      uniquesOf(t).map(u => el('p', { class: 'uq', text: u })),
-      out.length ? [el('h3', { text: `${STR.refsOut} (${out.length})` }), out.map(e => link(e.to, '← ' + e.from.columns[e.fi].name))] : null,
-      inn.length ? [el('h3', { text: `${STR.refsIn} (${inn.length})` }), inn.map(e => link(e.from, '→ ' + e.from.columns[e.fi].name))] : null
+      tableNotes(t, d.kind).map(u => el('p', { class: 'uq', text: u })),
+      related.length ? [el('h3', { text: STR.relationships }), related.map(e => link(e.from === t ? e.to : e.from, relationshipLabel(e)))] : null,
+      !concept && out.length ? [el('h3', { text: `${STR.refsOut} (${out.length})` }), out.map(e => link(e.to, '← ' + e.from.columns[e.fi].name))] : null,
+      !concept && inn.length ? [el('h3', { text: `${STR.refsIn} (${inn.length})` }), inn.map(e => link(e.from, '→ ' + e.from.columns[e.fi].name))] : null
     ].flat(2));
   }
 
-  function buildLegend(box, extra) {
+  function relationshipLabel({ from, to, relation }) {
+    return `${from.name} (${relation.fromCardinality}) · ${relation.name} · ${to.name} (${relation.toCardinality})`;
+  }
+
+  function buildLegend(box, extra, kind) {
     box.textContent = '';
+    if (kind === 'conceptual') {
+      append(box, [el('b', { text: STR.legendTitle }), el('br'), STR.conceptLegend, el('br'), STR.conceptRanges]);
+      return;
+    }
     append(box, [
       el('b', { text: STR.legendTitle }), el('br'),
       el('span', { class: 'ls' }), STR.legendNotNull + '   ', el('span', { class: 'ls d' }), STR.legendNull, el('br'),
@@ -1282,8 +1358,8 @@ button:hover{border-color:var(--muted)}
 
     let q, chips, stats, pc, panel, closeB;
     const top = el('div', { id: 'top' }, [
-      el('h1', {}, [d.name, el('small', { text: STR.viewerSubtitle })]),
-      q = el('input', { id: 'q', type: 'search', placeholder: STR.searchPh, 'aria-label': STR.search }),
+      el('h1', {}, [d.name, el('small', { text: modelTitle(d) })]),
+      q = el('input', { id: 'q', type: 'search', placeholder: d.kind === 'conceptual' ? 'Поиск сущности или атрибута…' : STR.searchPh, 'aria-label': STR.search }),
       chips = el('div', { id: 'chips' }),
       el('button', { id: 'fit', type: 'button', text: STR.fit, onclick: () => fitV() }),
       el('button', { id: 'reset', type: 'button', text: STR.resetLayout, onclick: resetV }),
@@ -1296,14 +1372,14 @@ button:hover{border-color:var(--muted)}
       pc = el('div', { id: 'pc' })
     ]);
     const legend = el('div', { id: 'legend' });
-    buildLegend(legend);
+    buildLegend(legend, undefined, d.kind);
     document.body.append(top, svg, panel, legend);
     const th = () => document.documentElement.style.setProperty('--th', top.offsetHeight + 'px');
     th(); addEventListener('resize', th);
     if (window.ResizeObserver) new ResizeObserver(th).observe(top);
 
     const R = new Renderer(svg, {
-      onStats: s => { stats.textContent = plural(s.tables, STR.tablesN) + ' · ' + plural(s.edges, STR.edgesN); }
+      onStats: s => { stats.textContent = plural(s.tables, d.kind === 'conceptual' ? STR.entitiesN : STR.tablesN) + ' · ' + plural(s.edges, STR.edgesN); }
     });
     R.setDiagram(d);
     const st = R.st, T = () => top.offsetHeight;
@@ -1378,6 +1454,7 @@ button:hover{border-color:var(--muted)}
 
   return {
     C, NAV, FONT, STR, CSS, NS, HEX, GID, THEME_KEY,
+    MODEL_KINDS, CARDINALITIES, modelKind, modelTitle, relationshipLabel,
     fmt, plural, el, mk, append,
     initialTheme, setTheme, currentTheme, applyGroupColors, injectCSS, colorVar, gkey,
     measure, tableWidth, tableHeight, uniquesOf, buildIndex, resolveRef, groupById, autoLayout,

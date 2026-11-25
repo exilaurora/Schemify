@@ -1,5 +1,5 @@
 /* ============================================================================
-   samples.js — встроенные примеры: демо-схема первого запуска и схема
+   samples.js — учебные модели учёта успеваемости и схема
    мониторинга сети из эталона (43 таблицы, 60 связей) с той же раскладкой.
    Описание в компактной нотации эталона: [имя, тип, флаги, ссылка].
    ========================================================================== */
@@ -7,8 +7,8 @@ var Samples = (function () {
   'use strict';
 
   /* Сборка диаграммы из компактной нотации. flags: 'pk','uq','null'; ref: 'table' или 'table.col' */
-  function build(name, groups, defs, layoutCfg) {
-    const d = Model.newDiagram(name);
+  function build(name, groups, defs, layoutCfg, kind) {
+    const d = Model.newDiagram(name, kind);
     d.groups = groups.map(([id, title, color, colorDark]) => ({ id, title, color, colorDark }));
     const byName = {};
     defs.forEach(([tn, group, description, cols, o]) => {
@@ -31,20 +31,67 @@ var Samples = (function () {
     return d;
   }
 
-  function demo() {
-    const ID = ['id', 'bigint', 'pk'];
-    return build('Демо: интернет-магазин', [
-      ['users', 'Покупатели', '#2f7dd1', '#4a97ec'],
-      ['catalog', 'Каталог', '#1f9d7a', '#35b895'],
-      ['orders', 'Заказы', '#d98a1c', '#eba33a']
-    ], [
-      ['customer', 'users', 'Покупатель.', [ID, ['email', 'text', 'uq'], ['full_name', 'text'], ['created_at', 'timestamptz']]],
-      ['address', 'users', 'Адрес доставки покупателя.', [ID, ['customer_id', 'bigint', '', 'customer'], ['city', 'text'], ['street', 'text'], ['zip', 'text', 'null']]],
-      ['category', 'catalog', 'Категория товаров, может быть вложенной.', [['id', 'int', 'pk'], ['parent_id', 'int', 'null', 'category'], ['title', 'text']]],
-      ['product', 'catalog', 'Товар.', [ID, ['category_id', 'int', '', 'category'], ['sku', 'text', 'uq'], ['title', 'text'], ['price', 'numeric(12,2)']]],
-      ['order', 'orders', 'Заказ покупателя.', [ID, ['customer_id', 'bigint', '', 'customer'], ['shipping_address_id', 'bigint', 'null', 'address'], ['status', 'text'], ['created_at', 'timestamptz']]],
-      ['order_item', 'orders', 'Позиция заказа.', [['order_id', 'bigint', 'pk', 'order'], ['product_id', 'bigint', 'pk', 'product'], ['qty', 'int'], ['price', 'numeric(12,2)']], { uq: 'UNIQUE(order_id, product_id)' }]
-    ], { rows: [['users', 'catalog', 'orders']], ncols: { users: 1, catalog: 1, orders: 1 } });
+  function university(kind, name) {
+    name = name || 'Учёт успеваемости';
+    const concepts = [
+      ['Студент', 'Обучающийся в вузе.', ['Номер зачётной книжки', 'ФИО']],
+      ['Дисциплина', 'Учебная дисциплина.', ['Код дисциплины', 'Название']],
+      ['Результат аттестации', 'Оценка за одну попытку аттестации.', ['Номер попытки', 'Дата аттестации', 'Оценка']]
+    ];
+    let d;
+    if (kind === 'conceptual') {
+      d = Model.newDiagram(name, kind);
+      d.tables = concepts.map(([title, description, attributes]) => ({
+        ...Model.newTable(title, 0, 0, null, kind), description,
+        columns: attributes.map(attribute => Model.newColumn(attribute))
+      }));
+      const [student, discipline, result] = d.tables;
+      d.relationships = [
+        { from: student.id, to: result.id, name: 'получает', fromCardinality: '1', toCardinality: '0..*' },
+        { from: discipline.id, to: result.id, name: 'оценивается в', fromCardinality: '1', toCardinality: '0..*' }
+      ];
+    } else if (kind === 'logical') {
+      d = build(name, [], [
+        ['Студент', null, concepts[0][1],
+          [['Номер зачётной книжки', 'Строка', 'pk'], ['ФИО', 'Строка']]],
+        ['Дисциплина', null, concepts[1][1],
+          [['Код дисциплины', 'Строка', 'pk'], ['Название', 'Строка']]],
+        ['Результат аттестации', null, concepts[2][1], [
+          ['Код результата', 'Целое число', 'pk'], ['Номер зачётной книжки', 'Строка', '', 'Студент'],
+          ['Код дисциплины', 'Строка', '', 'Дисциплина'], ['Номер попытки', 'Положительное целое'],
+          ['Дата аттестации', 'Дата'], ['Оценка', 'Целое число от 2 до 5']
+        ], { uq: 'UNIQUE(Номер зачётной книжки, Код дисциплины, Номер попытки)' }]
+      ], null, kind);
+    } else {
+      d = build(name, [], [
+        ['student', null, concepts[0][1], [['record_book_no', 'varchar(20)', 'pk'], ['full_name', 'text']]],
+        ['discipline', null, concepts[1][1], [['discipline_code', 'varchar(20)', 'pk'], ['title', 'text']]],
+        ['assessment_result', null, concepts[2][1], [
+          ['result_id', 'bigint', 'pk'], ['record_book_no', 'varchar(20)', '', 'student'],
+          ['discipline_code', 'varchar(20)', '', 'discipline'], ['attempt_no', 'smallint'],
+          ['assessed_on', 'date'], ['grade', 'smallint']
+        ], { uq: 'UNIQUE(record_book_no, discipline_code, attempt_no)' }]
+      ], null, kind);
+      const result = d.tables[2];
+      result.columns[3].defaultValue = '1';
+      result.columns[4].defaultValue = 'CURRENT_DATE';
+      result.definitions = [
+        'CHECK (attempt_no >= 1)', 'CHECK (grade BETWEEN 2 AND 5)',
+        'CREATE INDEX ix_assessment_discipline ON assessment_result (discipline_code)'
+      ];
+    }
+    Object.assign(d.tables[0], { x: 0, y: 0 });
+    if (kind === 'conceptual') {
+      const gap = 300;
+      Object.assign(d.tables[1], { x: gap, y: 0 });
+      d.tables[2].x = Math.round((gap + ERD.tableWidth(d.tables[1], kind) - ERD.tableWidth(d.tables[2], kind)) / 2);
+      d.tables[2].y = 180;
+    } else {
+      Object.assign(d.tables[1], { x: 0, y: 150 });
+      const leftWidth = Math.max(ERD.tableWidth(d.tables[0], kind), ERD.tableWidth(d.tables[1], kind));
+      Object.assign(d.tables[2], { x: leftWidth + 96, y: 15 });
+    }
+    return d;
   }
 
   function network() {
@@ -127,5 +174,5 @@ var Samples = (function () {
     });
   }
 
-  return { demo, network };
+  return { network, university };
 })();

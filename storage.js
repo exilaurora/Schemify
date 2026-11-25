@@ -28,6 +28,7 @@ var Store = (function () {
   const get = k => { try { return ls.getItem(k); } catch (e) { return null; } };
   const set = (k, v) => ls.setItem(k, v); /* может бросить QuotaExceededError */
   const json = (k, def) => { try { const v = JSON.parse(get(k)); return v == null ? def : v; } catch (e) { return def; } };
+  const indexEntry = d => ({ id: d.id, name: d.name, kind: d.kind, updatedAt: d.updatedAt, tables: (d.tables || []).length });
 
   function rebuildIndex() {
     const out = [];
@@ -36,7 +37,7 @@ var Store = (function () {
       if (!k || k.indexOf(P + 'd:') !== 0) continue;
       try {
         const d = JSON.parse(ls.getItem(k));
-        out.push({ id: d.id, name: d.name, updatedAt: d.updatedAt, tables: (d.tables || []).length });
+        out.push(indexEntry(d));
       } catch (e) { /* повреждённая запись — пропускаем */ }
     }
     try { set(K.index, JSON.stringify(out)); } catch (e) { /* не критично */ }
@@ -49,7 +50,7 @@ var Store = (function () {
   }
   function writeIndexEntry(d) {
     const idx = (json(K.index, []) || []).filter(x => x && x.id !== d.id);
-    idx.push({ id: d.id, name: d.name, updatedAt: d.updatedAt, tables: d.tables.length });
+    idx.push(indexEntry(d));
     set(K.index, JSON.stringify(idx));
   }
   function has(id) { return get(DK(id)) != null; }

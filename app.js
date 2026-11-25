@@ -66,7 +66,7 @@
     return new Promise(resolve => {
       const err = el('div', { class: 'err', role: 'alert' });
       const dlg = el('dialog', { class: 'dlg', 'aria-label': o.title });
-      const form = el('form', { method: 'dialog' }, [
+      const form = el('form', { method: 'dialog', novalidate: o.noValidate }, [
         el('h2', { text: o.title }), o.body || null, err,
         el('div', { class: 'actions' }, o.buttons.map(b => el('button', {
           type: 'submit', value: b.value, text: b.label,
@@ -119,12 +119,14 @@
 
   const R = new ERD.Renderer(svg, {
     ports: true,
-    onStats: s => { $('#stats').textContent = plural(s.tables, L.tablesN) + ' · ' + plural(s.edges, L.edgesN); },
+    onStats: s => { $('#stats').textContent = countObjects(s.tables, D.kind) + ' · ' + plural(s.edges, L.edgesN); },
     onView: () => { scheduleViewSave(); scheduleMinimap(); }
   });
   const st = R.st, sel = st.selected;
   const byId = id => R.idx.byId.get(id);
   const canEdit = () => { if (mode === 'edit') return true; toast(L.viewModeRO); return false; };
+  const isConceptual = () => D.kind === 'conceptual';
+  const countObjects = (n, kind) => plural(n, kind === 'conceptual' ? L.entitiesN : L.tablesN);
   const wide = () => innerWidth > 800;
   const margins = () => ({
     top: topBar.offsetHeight,
@@ -137,7 +139,7 @@
   /* ======================= ИСТОРИЯ (снимки, ≥100 шагов) ======================= */
   const History = {
     undo: [], redo: [], cur: null, key: null, t: 0, LIMIT: 200,
-    snap() { return JSON.stringify({ name: D.name, groups: D.groups, tables: D.tables, notes: D.notes }); },
+    snap() { return JSON.stringify({ name: D.name, kind: D.kind, dbms: D.dbms, groups: D.groups, tables: D.tables, relationships: D.relationships, notes: D.notes }); },
     reset() { this.undo = []; this.redo = []; this.cur = this.snap(); this.key = null; updateUndoButtons(); },
     /* merge — ключ слияния: подряд идущие правки одного поля текста = один шаг */
     commit(merge) {
@@ -157,7 +159,7 @@
       if (!from.length) return false;
       to.push(this.cur); this.cur = from.pop(); this.key = null;
       const o = JSON.parse(this.cur);
-      D.name = o.name; D.groups = o.groups; D.tables = o.tables; D.notes = o.notes || [];
+      Object.assign(D, o);
       updateUndoButtons();
       return true;
     }
@@ -175,14 +177,14 @@
     if (o.render !== false) R.rebuild(o.ids);
     if (History.commit(o.merge)) { D.updatedAt = Model.now(); scheduleSave(); }
     if (o.panel !== false) renderPanel(o.focus);
-    renderChips(); updateEmpty(); scheduleMinimap(); updateLint();
+    renderModelControls(); renderChips(); updateEmpty(); scheduleMinimap(); updateLint();
   }
   function afterHistory() {
     cancelInline();
     R.rebuild();
     D.updatedAt = Model.now(); scheduleSave();
     $('#dname').value = D.name; document.title = D.name + ' — ' + L.appTitle;
-    renderChips(); renderPanel(); updateEmpty(); scheduleMinimap(); updateLint();
+    renderModelControls(); renderChips(); renderPanel(); updateEmpty(); scheduleMinimap(); updateLint();
   }
   function undo() { if (canEdit() && History.step(-1)) afterHistory(); }
   function redo() { if (canEdit() && History.step(1)) afterHistory(); }
@@ -248,10 +250,12 @@
   function reloadFromStorage() {
     const nd = Store.load(D.id); if (!nd) return;
     extClose = null;
-    D.name = nd.name; D.groups = nd.groups; D.tables = nd.tables; D.updatedAt = nd.updatedAt; lastWritten = nd.updatedAt;
+    const { name, kind, dbms, groups, tables, relationships, notes, updatedAt } = nd;
+    Object.assign(D, { name, kind, dbms, groups, tables, relationships, notes, updatedAt });
+    lastWritten = updatedAt;
     R.rebuild(); History.commit();
     $('#dname').value = D.name;
-    renderChips(); renderPanel(); renderSidebar(); updateEmpty(); scheduleMinimap(); updateLint();
+    renderModelControls(); renderChips(); renderPanel(); renderSidebar(); updateEmpty(); scheduleMinimap(); updateLint();
   }
 
   /* ======================= ОТКРЫТИЕ ДИАГРАММ ======================= */
@@ -261,6 +265,7 @@
     const needFit = forceFit || !d.view;
     D = d; Store.setLast(d.id);
     st.hidden.clear(); st.query = ''; $('#q').value = ''; groupsPanel = false; st.hovered = null;
+    renderModelControls();
     R.setDiagram(D);
     renderChips(); setTh();
     if (needFit) fitView();
@@ -274,8 +279,18 @@
   }
   function updateEmpty() {
     const e = $('#empty');
-    e.hidden = !!D.tables.length;
-    e.textContent = L.emptyHint;
+    e.hidden = !!(D.tables.length || D.notes.length);
+    e.textContent = isConceptual() ? 'Добавьте сущность. Связи между сущностями задаются кнопкой «Связи».' : L.emptyHint;
+  }
+
+  function renderModelControls() {
+    const concept = isConceptual(), add = $('#b-add-table'), modelLabel = $('#model-level');
+    add.textContent = concept ? '+ Сущность' : L.addTable;
+    add.title = concept ? 'Добавить сущность (N)' : L.addTableAria;
+    $('#b-relationships').hidden = !concept;
+    const label = ERD.modelTitle(D);
+    if (modelLabel.textContent !== label) modelLabel.textContent = label;
+    $('#q').placeholder = concept ? 'Поиск сущности или атрибута…' : L.searchPh;
   }
 
   /* ======================= КОМАНДЫ ======================= */
@@ -300,9 +315,10 @@
     if (!canEdit()) return;
     const p = pos || (() => { const c = R.viewCenter(margins()); return { x: c.x, y: c.y - 60 }; })();
     const names = new Set(D.tables.map(t => t.name));
-    let n = D.tables.length + 1; while (names.has('table_' + n)) n++;
+    const prefix = isConceptual() ? 'Сущность ' : 'table_';
+    let n = D.tables.length + 1; while (names.has(prefix + n)) n++;
     if (group === undefined) { const s = sel.size === 1 ? byId([...sel][0]) : null; group = s ? s.group : null; }
-    const t = Model.newTable('table_' + n, snapV(p.x - C.W / 2), snapV(p.y - 15), group);
+    const t = Model.newTable(prefix + n, snapV(p.x - (isConceptual() ? 90 : C.W / 2)), snapV(p.y - 15), group, D.kind);
     D.tables.push(t);
     sel.clear(); sel.add(t.id); groupsPanel = false;
     changed({ ids: [t.id], focus: 'tname' });
@@ -313,14 +329,13 @@
     const n = sel.size;
     Model.removeTables(D, [...sel]); sel.clear();
     changed();
-    toast(fmt(L.deleted, { n }), { actions: [{ label: L.undo.split(' (')[0], fn: undo }] });
+    toast(isConceptual() ? 'Удалено сущностей: ' + n : fmt(L.deleted, { n }), { actions: [{ label: L.undo.split(' (')[0], fn: undo }] });
   }
   function duplicateSelected() {
     if (!sel.size) { toast(L.nothingSelected); return; }
     if (!canEdit()) return;
-    const src = D.tables.filter(t => sel.has(t.id));
-    const b = R.bounds(new Set(src.map(t => t.id)));
-    const frag = { groups: [], tables: src.map(Model.cloneTable) };
+    const b = R.bounds(sel);
+    const frag = Model.makeFragment(D, sel, true);
     const pos = b ? { x: (b.x0 + b.x1) / 2 + 40, y: (b.y0 + b.y1) / 2 + 40 } : null;
     const res = Model.insertFragment(D, frag, pos, { keepExternalRefs: true, snap: prefs.snap ? C.GRID : 0 });
     sel.clear(); res.ids.forEach(id => sel.add(id));
@@ -444,13 +459,14 @@
   }
 
   function tablePanel(t) {
+    const concept = isConceptual(), physical = D.kind === 'physical';
     const dupe = () => D.tables.some(x => x !== t && x.name === t.name);
     const warn = el('div', { class: 'warn', text: L.dupName, hidden: !dupe() });
     append(pc, [
       el('div', { class: 'ph' }, [textInput('tname', t.name, v => {
         t.name = v; warn.hidden = !dupe();
         changed({ ids: [t.id], merge: 'tname:' + t.id, panel: false });
-      }, { class: 'tname-in', 'aria-label': L.tableName, onkeydown: e => { if (e.key === 'Enter') e.target.blur(); } }), warn]),
+      }, { class: 'tname-in', 'aria-label': concept ? 'Имя сущности' : L.tableName, onkeydown: e => { if (e.key === 'Enter') e.target.blur(); } }), warn]),
       el('div', { class: 'pactions' }, [
         btn(L.duplicateTable, duplicateSelected), btn(L.copyBtn, () => copySelection(false)),
         btn(L.deleteTable, deleteSelected, 'danger')
@@ -462,20 +478,28 @@
           t.group = v || null; changed({ ids: [t.id], focus: 'tgroup' });
         }
       }, groupOptions(t.group, true))),
-      el('label', { class: 'check' }, [el('input', {
+      !concept ? el('label', { class: 'check' }, [el('input', {
         type: 'checkbox', checked: t.partitioned, 'data-k': 'tpart',
         onchange: e => { t.partitioned = e.target.checked; changed({ ids: [t.id] }); }
-      }), L.partitionedLbl]),
+      }), L.partitionedLbl]) : null,
       field(L.description, el('textarea', {
         'data-k': 'tdesc', value: t.description, rows: 2,
         oninput: e => { t.description = e.target.value; changed({ render: false, merge: 'desc:' + t.id, panel: false }); },
         onblur: () => History.breakMerge()
       })),
-      el('h3', { text: `${L.columns} (${t.columns.length})` })
+      el('h3', { text: `${concept ? L.attributes : L.columns} (${t.columns.length})` })
     ]);
     const list = el('div', { class: 'cols' });
     t.columns.forEach((c, i) => list.appendChild(colRow(t, c, i, list)));
-    append(pc, [list, btn(L.addColumn, () => addColumn(t, t.columns.length), 'addbtn', { 'data-k': 'addcol' })]);
+    append(pc, [list, btn(concept ? '+ Атрибут' : L.addColumn, () => addColumn(t, t.columns.length), 'addbtn', { 'data-k': 'addcol' })]);
+
+    if (concept) {
+      const edges = R.idx.edges.filter(e => e.from === t || e.to === t);
+      append(pc, [el('h3', { text: L.relationships }),
+        edges.map(e => btn(ERD.relationshipLabel(e), () => editRelationship(e.relation), 'relationship-row')),
+        btn('+ Связь', () => editRelationship(null, t.id), 'addbtn')]);
+      return;
+    }
 
     append(pc, el('h3', { text: L.uniques }));
     t.uniques.forEach((u, i) => pc.appendChild(el('div', { class: 'uqrow' }, [
@@ -486,6 +510,20 @@
     pc.appendChild(btn(L.addUnique, () => {
       t.uniques.push(''); changed({ ids: [t.id], focus: 'uq' + (t.uniques.length - 1) });
     }, 'addbtn', { 'data-k': 'adduq' }));
+    if (physical) {
+      append(pc, [
+        el('h3', { text: 'Индексы и ограничения СУБД' }),
+        field('SQL-выражения, по одному на строку', el('textarea', {
+          'data-k': 'definitions', rows: 3, value: (t.definitions || []).join('\n'),
+          placeholder: 'CHECK (оценка BETWEEN 2 AND 5)\nCREATE INDEX …',
+          oninput: e => {
+            t.definitions = e.target.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+            changed({ ids: [t.id], merge: 'definitions:' + t.id, panel: false });
+          },
+          onblur: () => History.breakMerge()
+        }))
+      ]);
+    }
 
     const out = R.idx.edges.filter(e => e.from === t), inn = R.idx.edges.filter(e => e.to === t);
     const link = (target, txt) => el('a', { class: 'lnk', href: '#', onclick: ev => { ev.preventDefault(); linkTo(target); } }, [target.name + ' ', el('span', { text: txt })]);
@@ -495,8 +533,10 @@
 
   function addColumn(t, at) {
     const names = new Set(t.columns.map(c => c.name));
-    let n = t.columns.length + 1; while (names.has('column_' + n)) n++;
-    t.columns.splice(at, 0, Model.newColumn('column_' + n, 'text'));
+    const prefix = isConceptual() ? 'Атрибут ' : 'column_';
+    let n = t.columns.length + 1; while (names.has(prefix + n)) n++;
+    const type = D.kind === 'logical' ? 'Строка' : '';
+    t.columns.splice(at, 0, Model.newColumn(prefix + n, type));
     changed({ ids: [t.id], focus: 'c' + at + '-name' });
     const inp = pc.querySelector(`[data-k="c${at}-name"]`); if (inp) inp.select();
   }
@@ -508,7 +548,8 @@
 
   function colRow(t, c, i, list) {
     const k = 'c' + i + '-';
-    const targets = [...D.tables].sort((a, b) => a.name.localeCompare(b.name));
+    const concept = isConceptual();
+    const targets = concept ? [] : [...D.tables].sort((a, b) => a.name.localeCompare(b.name));
     const tt = c.ref ? byId(c.ref.table) : null;
     const tOpts = [el('option', { value: '', text: L.fkNone, selected: !c.ref })];
     if (c.ref && !tt) tOpts.push(el('option', { value: c.ref.table, text: L.fkBroken, selected: true }));
@@ -539,24 +580,27 @@
         if (moveColumn(t, i, to)) changed({ focus: 'c' + to + '-h' });
       }
     });
+    const nextColumn = e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const next = pc.querySelector(`[data-k="c${i + 1}-name"]`);
+      if (next) next.focus(); else addColumn(t, i + 1);
+    };
     return el('div', { class: 'colrow', 'data-i': i }, [
       el('div', { class: 'cl1' }, [
         handle,
         textInput(k + 'name', c.name, v => { Model.renameColumn(D, t, i, v); changed({ merge: 'cname:' + t.id + ':' + i, panel: false }); },
-          { class: 'mono cname', 'aria-label': L.colName, onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); pc.querySelector(`[data-k="${k}type"]`).focus(); } } }),
-        textInput(k + 'type', c.type, v => { c.type = v; changed({ ids: [t.id], merge: 'ctype:' + t.id + ':' + i, panel: false }); },
+          { class: 'mono cname', 'aria-label': concept ? 'Имя атрибута' : L.colName, onkeydown: concept ? nextColumn : e => { if (e.key === 'Enter') { e.preventDefault(); pc.querySelector(`[data-k="${k}type"]`).focus(); } } }),
+        !concept ? textInput(k + 'type', c.type, v => { c.type = v; changed({ ids: [t.id], merge: 'ctype:' + t.id + ':' + i, panel: false }); },
           {
-            class: 'mono ctype', list: 'pg-types', 'aria-label': L.colType,
-            onkeydown: e => {
-              if (e.key !== 'Enter') return;
-              e.preventDefault();
-              const next = pc.querySelector(`[data-k="c${i + 1}-name"]`);
-              if (next) next.focus(); else addColumn(t, i + 1);
-            }
-          }),
-        btn('✕', () => { Model.removeColumn(D, t, i); changed({ focus: 'addcol' }); }, 'xbtn', { 'aria-label': L.delColumn, title: L.delColumn, 'data-k': k + 'x' })
+            class: 'mono ctype', list: D.kind === 'physical' && /postgresql/i.test(D.dbms) ? 'pg-types' : null,
+            placeholder: D.kind === 'physical' ? 'Тип SQL' : 'Домен',
+            'aria-label': D.kind === 'physical' ? 'Тип SQL' : 'Логический домен', onkeydown: nextColumn
+          }) : null,
+        btn('✕', () => { Model.removeColumn(D, t, i); changed({ focus: 'addcol' }); }, 'xbtn',
+          { 'aria-label': concept ? 'Удалить атрибут' : L.delColumn, 'data-k': k + 'x' })
       ]),
-      el('div', { class: 'cl2' }, [
+      !concept ? el('div', { class: 'cl2' }, [
         flag('pk', 'PK', 'pk'), flag('unique', 'UQ', 'uq'), flag('nullable', 'NULL', 'nl'),
         el('span', { class: 'fklbl', text: 'FK →', 'aria-hidden': 'true' }),
         el('select', {
@@ -576,7 +620,11 @@
           'data-k': k + 'fkc', 'aria-label': L.fkColumn, title: L.fkColumn, disabled: !tt,
           onchange: e => { c.ref.column = e.target.value || null; changed({ focus: k + 'fkc' }); }
         }, cOpts)
-      ])
+      ]) : null,
+      D.kind === 'physical' ? field('Значение по умолчанию (SQL)', textInput(k + 'default', c.defaultValue || '', v => {
+        c.defaultValue = v;
+        changed({ ids: [t.id], merge: 'default:' + t.id + ':' + i, panel: false });
+      }, { class: 'mono', maxlength: 500 })) : null
     ]);
   }
 
@@ -942,14 +990,15 @@
       const t = byId(id), row = tgt.closest('.row'), n = sel.size;
       if (edit && row && n === 1) {
         const i = +row.getAttribute('data-i');
-        add(L.cmRenameColumn, () => renameColumnInline(t, i));
-        add(L.cmInsertColumn, () => addColumn(t, i + 1));
-        add(L.cmDeleteColumn, () => { Model.removeColumn(D, t, i); changed(); }, null, true);
+        add(isConceptual() ? 'Переименовать атрибут' : L.cmRenameColumn, () => renameColumnInline(t, i));
+        add(isConceptual() ? 'Вставить атрибут ниже' : L.cmInsertColumn, () => addColumn(t, i + 1));
+        add(isConceptual() ? 'Удалить атрибут' : L.cmDeleteColumn, () => { Model.removeColumn(D, t, i); changed(); }, null, true);
         sep();
       }
       if (edit && n === 1) {
-        add(L.cmRenameTable, () => renameTableInline(t));
-        add(L.cmAddColumn, () => addColumn(t, t.columns.length));
+        add(isConceptual() ? 'Переименовать сущность' : L.cmRenameTable, () => renameTableInline(t));
+        add(isConceptual() ? 'Добавить атрибут' : L.cmAddColumn, () => addColumn(t, t.columns.length));
+        if (isConceptual()) add('Добавить связь', () => editRelationship(null, t.id));
         sep();
       }
       if (edit) add(L.cmDuplicate, duplicateSelected, 'Ctrl+D');
@@ -962,13 +1011,13 @@
           add(L.cmUngroup, () => { const ids = [...sel]; ids.forEach(x => { byId(x).group = null; }); changed({ ids }); });
         }
         sep();
-        add(n > 1 ? fmt(L.cmDeleteN, { n }) : L.cmDelete, deleteSelected, 'Delete', true);
+        add(n > 1 ? (isConceptual() ? 'Удалить сущности (' + n + ')' : fmt(L.cmDeleteN, { n })) : L.cmDelete, deleteSelected, 'Delete', true);
       }
     } else if (tgt.classList.contains('gbox') || tgt.classList.contains('gtitle')) {
       const gid = tgt.getAttribute('data-gid');
-      if (edit) add(L.cmAddTableToGroup, () => addTable(p, gid), 'N');
+      if (edit) add(isConceptual() ? 'Добавить сущность в группу' : L.cmAddTableToGroup, () => addTable(p, gid), 'N');
       if (edit) add(L.cmAddNote, () => noteEditor(null, p, { x: ev.clientX, y: ev.clientY }));
-      if (edit) add(L.cmSelectGroup, () => setSelection(D.tables.filter(t => t.group === gid && R.isVisible(t)).map(t => t.id)));
+      if (edit) add(isConceptual() ? 'Выделить сущности группы' : L.cmSelectGroup, () => setSelection(D.tables.filter(t => t.group === gid && R.isVisible(t)).map(t => t.id)));
       if (edit) {
         add(L.cmRenameGroup, () => renameGroupInline(gid));
         add(L.cmGroupSettings, () => { sel.clear(); groupsPanel = true; R.refresh(); renderPanel('g-' + gid + '-title'); });
@@ -977,7 +1026,7 @@
       }
     } else {
       if (edit) {
-        add(L.cmAddTable, () => addTable(p, null), 'N');
+        add(isConceptual() ? 'Добавить сущность' : L.cmAddTable, () => addTable(p, null), 'N');
         add(L.cmAddNote, () => noteEditor(null, p, { x: ev.clientX, y: ev.clientY }));
         add(L.cmPaste, () => pasteFromButton(p), 'Ctrl+V');
         add(L.cmPasteJson, openPasteJson);
@@ -1050,16 +1099,15 @@
   function cancelInline() { if (!inline) return; const i = inline; inline = null; i.inp.remove(); }
 
   /* ======================= БУФЕР ОБМЕНА ======================= */
-  function writeClipboard(text) {
-    const fallback = () => {
-      const prev = document.activeElement;
-      const ta = el('textarea', { value: text, readonly: true, style: { position: 'fixed', left: '-9999px', top: '0', opacity: '0' } });
-      document.body.appendChild(ta); ta.select();
-      try { document.execCommand('copy'); } catch (e) { /* остаётся копия в localStorage */ }
-      ta.remove(); if (prev && prev.focus) prev.focus({ preventScroll: true });
-    };
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(fallback);
-    else fallback();
+  async function writeClipboard(text) {
+    if (navigator.clipboard?.writeText) {
+      try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* пробуем встроенную команду */ }
+    }
+    const prev = document.activeElement;
+    const ta = el('textarea', { value: text, readonly: true, style: { position: 'fixed', left: '-9999px', top: '0', opacity: '0' } });
+    (document.querySelector('dialog[open]') || document.body).appendChild(ta); ta.select();
+    try { return document.execCommand('copy'); } catch (e) { return false; }
+    finally { ta.remove(); if (prev && prev.focus) prev.focus({ preventScroll: true }); }
   }
   function copySelection(cut) {
     if (!sel.size) { toast(L.nothingSelected); return; }
@@ -1069,7 +1117,7 @@
     Store.setClip(text);
     writeClipboard(text);
     if (cut) { Model.removeTables(D, ids); sel.clear(); changed(); }
-    toast(fmt(cut ? L.cut : L.copied, { n: plural(ids.length, L.tablesN) }));
+    toast(fmt(cut ? L.cut : L.copied, { n: countObjects(ids.length, D.kind) }));
   }
   function parseFragment(text, warnings) {
     if (!text || !/^\s*[{<]/.test(text)) return null;
@@ -1089,12 +1137,16 @@
     return true;
   }
   function insertFrag(frag, where, warnings) {
+    if ((frag.kind === 'conceptual') !== isConceptual()) {
+      toast('Вставьте фрагмент в модель того же уровня или импортируйте его как отдельную диаграмму.', { type: 'warn' });
+      return;
+    }
     const pos = where && typeof where === 'object' ? where
       : where === 'cursor' && pointerInside && pointerWorld ? pointerWorld : R.viewCenter(margins());
     const res = Model.insertFragment(D, frag, pos, { snap: prefs.snap ? C.GRID : 0 });
     sel.clear(); res.ids.forEach(id => sel.add(id)); groupsPanel = false;
     changed();
-    toast(fmt(L.pasted, { n: plural(res.ids.length, L.tablesN) }));
+    toast(fmt(L.pasted, { n: countObjects(res.ids.length, D.kind) }));
     if (res.renamed.length) toast(fmt(L.renamedOnPaste, { list: res.renamed.slice(0, 6).join(', ') + (res.renamed.length > 6 ? '…' : '') }), { timeout: 6000 });
     if (warnings && warnings.length) toast(warnings[0] + (warnings.length > 1 ? ` (+${warnings.length - 1})` : ''), { type: 'warn', timeout: 6000 });
   }
@@ -1159,7 +1211,8 @@
       const collide = Store.has(d.id) || d.id === D.id;
       const v = await dialog({
         title: L.importTitle,
-        body: [el('p', { text: fmt(L.importOne, { name: d.name, tables: plural(d.tables.length, L.tablesN), edges: plural(ne, L.edgesN) }) }),
+        body: [el('p', { text: ERD.modelTitle(d) }),
+          el('p', { text: fmt(L.importOne, { name: d.name, tables: countObjects(d.tables.length, d.kind), edges: plural(ne, L.edgesN) }) }),
           collide ? el('p', { class: 'hint', text: L.importCollideOne }) : null].concat(warnList(res.warnings) || []),
         buttons: [{ value: 'new', label: L.importAsNew, primary: true }, { value: 'replace', label: L.importReplace }, { value: '', label: L.cancel }]
       });
@@ -1170,9 +1223,11 @@
         toast(fmt(L.importDone, { n: 1 }));
       } else if (v === 'replace') {
         if (mode !== 'edit') setMode('edit');
-        D.name = d.name; D.groups = d.groups; D.tables = d.tables;
-        sel.clear(); groupsPanel = false; st.hidden.clear();
+        const { name, kind, dbms, groups, tables, relationships, notes } = d;
+        Object.assign(D, { name, kind, dbms, groups, tables, relationships, notes });
+        sel.clear(); selectNote(null); groupsPanel = false; st.hidden.clear();
         $('#dname').value = D.name;
+        document.title = D.name + ' · ' + L.appTitle;
         changed();
         if (d.view) { Object.assign(D.view, d.view); R.applyView(); } else fitView();
       }
@@ -1241,7 +1296,7 @@
     const code = ERDCoreFactory.toString().replace(/<\/(script)/gi, '<\\/$1').replace(/<!--/g, '<\\!--');
     return '<!doctype html>\n<html lang="ru">\n<head>\n<meta charset="utf-8">\n' +
       '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">\n<link rel="icon" href="data:,">\n' +
-      `<meta name="generator" content="Schemify">\n<title>${escHtml(d.name)} — ${escHtml(L.schemaSuffix)}</title>\n` +
+      `<meta name="generator" content="Schemify">\n<title>${escHtml(d.name)} · ${escHtml(ERD.modelTitle(d))}</title>\n` +
       `<style>${ERD.CSS}</style>\n</head>\n<body>\n` +
       `<script type="application/json" id="erd-data">${data}</script>\n` +
       `<script>\n"use strict";\nvar ERD = (${code})();\nERD.runViewer(JSON.parse(document.getElementById("erd-data").textContent));\n</script>\n` +
@@ -1250,56 +1305,137 @@
   const exportHtml = () => exportHtmlOf(D.id);
   /* SVG: клон слоёв с вычисленными стилями (файл не зависит от CSS-переменных) */
   const STYLE_PROPS = ['fill', 'fill-opacity', 'stroke', 'stroke-opacity', 'stroke-width', 'stroke-dasharray', 'opacity',
-    'font-family', 'font-size', 'font-weight', 'font-style', 'text-anchor', 'letter-spacing'];
-  function inlineClone(src) {
+    'font-family', 'font-size', 'font-weight', 'font-style', 'text-anchor', 'letter-spacing', 'paint-order', 'stroke-linejoin', 'white-space'];
+  function inlineClone(src, forReport) {
     if (src.nodeType !== 1) return src.cloneNode(false);
-    if (src.classList.contains('hit') || src.classList.contains('port') || src.tagName === 'title') return null;
+    if (src.classList.contains('hit') || src.classList.contains('port') || src.classList.contains('rowhl') || src.tagName === 'title') return null;
     const cs = getComputedStyle(src);
     if (cs.display === 'none') return null;
     const dst = src.cloneNode(false);
     dst.removeAttribute('class'); dst.removeAttribute('style'); dst.removeAttribute('id');
     if (src.tagName === 'g') { if (cs.opacity !== '1') dst.setAttribute('opacity', cs.opacity); }
-    else dst.setAttribute('style', STYLE_PROPS.map(p => p + ':' + cs.getPropertyValue(p)).join(';'));
-    src.childNodes.forEach(ch => { const c = inlineClone(ch); if (c) dst.appendChild(c); });
+    else {
+      const overrides = forReport ? Report.styleFor(src) : {};
+      dst.setAttribute('style', STYLE_PROPS.map(p => p + ':' + (overrides[p] ?? cs.getPropertyValue(p))).join(';'));
+    }
+    src.childNodes.forEach(ch => { const c = inlineClone(ch, forReport); if (c) dst.appendChild(c); });
     return dst;
   }
-  function buildSvg() {
-    const saved = { sel: [...sel], hov: st.hovered, q: st.query };
-    sel.clear(); st.hovered = null; st.query = ''; R.refresh();
+  function buildSvg(forReport = false, visibleOnly = true) {
+    const saved = { sel: [...sel], hov: st.hovered, q: st.query, hidden: [...st.hidden] };
+    svg.classList.add('exporting');
     try {
-      const b = R.bounds(); if (!b) throw new Error(L.emptyHint.split('.')[0]);
-      const x0 = b.x0, y0 = b.y0, w = Math.ceil(b.x1 - b.x0), h = Math.ceil(b.y1 - b.y0);
+      sel.clear(); st.hovered = null; st.query = '';
+      if (!visibleOnly) st.hidden.clear();
+      R.drawGroups();
+      const stats = R.refresh();
+      const b = R.bounds();
+      if (!b) throw new Error('Нет видимых объектов. Покажите группы или экспортируйте всю модель.');
+      const layers = [R.gl, R.el, R.nl, R.tl];
+      for (const layer of layers) {
+        const box = layer.getBBox();
+        if (!box.width && !box.height) continue;
+        b.x0 = Math.min(b.x0, box.x - 10); b.y0 = Math.min(b.y0, box.y - 10);
+        b.x1 = Math.max(b.x1, box.x + box.width + 10); b.y1 = Math.max(b.y1, box.y + box.height + 10);
+      }
+      const legend = forReport && stats.tables ? Report.legend(D.kind, stats.edges > 0) : [];
+      const x0 = b.x0, y0 = b.y0, legendY = b.y1 + 10;
+      const legendWidth = Math.max(0, ...legend.map(s => ERD.measure(s, '12px sans-serif') + 32));
+      const w = Math.ceil(Math.max(b.x1 - x0, legendWidth)), h = Math.ceil(b.y1 - y0 + (legend.length ? 12 + legend.length * 17 : 0));
       const cs = getComputedStyle(document.documentElement), v = p => cs.getPropertyValue(p).trim();
       const out = ERD.mk('svg', { width: w, height: h, viewBox: `${x0} ${y0} ${w} ${h}` });
-      const defs = ERD.mk('defs', {}, out);
-      const pat = ERD.mk('pattern', { id: 'dots', width: C.GRID, height: C.GRID, patternUnits: 'userSpaceOnUse' }, defs);
-      ERD.mk('circle', { cx: 1.2, cy: 1.2, r: 1.2, fill: v('--grid') }, pat);
-      ERD.mk('rect', { x: x0, y: y0, width: w, height: h, fill: v('--bg') }, out);
-      ERD.mk('rect', { x: x0, y: y0, width: w, height: h, fill: 'url(#dots)' }, out);
-      [R.gl, R.el, R.nl, R.tl].forEach(layer => { const c = inlineClone(layer); if (c) out.appendChild(c); });
-      return { text: '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(out), w, h };
+      ERD.mk('rect', { x: x0, y: y0, width: w, height: h, fill: forReport ? '#fff' : v('--bg') }, out);
+      if (!forReport) {
+        const defs = ERD.mk('defs', {}, out);
+        const pat = ERD.mk('pattern', { id: 'dots', width: C.GRID, height: C.GRID, patternUnits: 'userSpaceOnUse' }, defs);
+        ERD.mk('circle', { cx: 1.2, cy: 1.2, r: 1.2, fill: v('--grid') }, pat);
+        ERD.mk('rect', { x: x0, y: y0, width: w, height: h, fill: 'url(#dots)' }, out);
+      }
+      layers.forEach(layer => out.appendChild(inlineClone(layer, forReport)));
+      legend.forEach((s, i) => {
+        ERD.mk('text', { x: x0 + 12, y: legendY + i * 17, fill: '#000', 'font-family': 'sans-serif', 'font-size': 12 }, out).textContent = s;
+      });
+      return { out, w, h };
     } finally {
-      saved.sel.forEach(id => sel.add(id)); st.hovered = saved.hov; st.query = saved.q; R.refresh();
+      saved.hidden.forEach(id => st.hidden.add(id));
+      saved.sel.forEach(id => sel.add(id)); st.hovered = saved.hov; st.query = saved.q;
+      R.drawGroups(); R.refresh(); svg.classList.remove('exporting');
     }
   }
+  const svgText = out => '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(out);
   function exportSvg() {
-    try { download(safeName(D.name) + '.svg', buildSvg().text, 'image/svg+xml'); }
+    try { download(safeName(D.name) + '.svg', svgText(buildSvg().out), 'image/svg+xml'); }
     catch (e) { toast(fmt(L.exportFailed, { msg: e.message }), { type: 'error' }); }
   }
   function exportPng() {
     let s;
     try { s = buildSvg(); } catch (e) { toast(fmt(L.exportFailed, { msg: e.message }), { type: 'error' }); return; }
     const scale = Math.max(0.1, Math.min(2, 16000 / s.w, 16000 / s.h, Math.sqrt(2.4e8 / (s.w * s.h))));
-    const img = new Image();
+    const img = new Image(), name = safeName(D.name) + '.png';
     img.onload = () => {
       try {
         const cv = el('canvas', { width: Math.round(s.w * scale), height: Math.round(s.h * scale) });
         const ctx = cv.getContext('2d'); ctx.scale(scale, scale); ctx.drawImage(img, 0, 0, s.w, s.h);
-        cv.toBlob(b => { if (b) download(safeName(D.name) + '.png', b); else toast(fmt(L.exportFailed, { msg: 'canvas' }), { type: 'error' }); }, 'image/png');
+        cv.toBlob(b => { if (b) download(name, b); else toast(fmt(L.exportFailed, { msg: 'canvas' }), { type: 'error' }); }, 'image/png');
       } catch (e) { toast(fmt(L.exportFailed, { msg: e.message }), { type: 'error' }); }
     };
     img.onerror = () => toast(fmt(L.exportFailed, { msg: 'SVG → PNG' }), { type: 'error' });
-    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s.text);
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgText(s.out));
+  }
+  async function exportReport() {
+    if (!D.tables.length && !D.notes.length) { toast('Добавьте данные в модель, чтобы экспортировать рисунок.'); return; }
+    const number = el('input', { type: 'text', value: '1', maxlength: 20, placeholder: '1, 2.1 или А.1', required: true });
+    const type = ERD.MODEL_KINDS[D.kind].title;
+    const title = el('textarea', { class: 'caption-text', rows: 2, maxlength: 250, required: true,
+      value: type + ' базы данных «' + D.name + '»' + (D.dbms ? ' (' + D.dbms + ')' : '') });
+    const width = el('input', { type: 'number', min: 40, max: 260, step: 1, value: 160, required: true });
+    const visibleOnly = el('input', { type: 'checkbox' });
+    const caption = el('textarea', { class: 'caption-text', rows: 2, readonly: true, onclick: e => e.target.select() });
+    const error = el('p', { class: 'err', role: 'alert' });
+    const status = el('p', { class: 'hint', role: 'status' });
+    const updateCaption = () => {
+      caption.value = 'Рисунок ' + number.value.trim() + ' – ' + title.value.trim().replace(/\s+/g, ' ').replace(/\.+$/, '');
+      status.textContent = '';
+    };
+    [number, title].forEach(input => input.addEventListener('input', updateCaption));
+    updateCaption();
+    const toFile = async (button, format) => {
+      if (!width.reportValidity()) return;
+      button.disabled = true;
+      error.textContent = '';
+      status.textContent = '';
+      try {
+        const figure = buildSvg(true, visibleOnly.checked), mm = Number(width.value);
+        const base = safeName(D.name) + ' - рисунок';
+        if (format === 'svg') download(base + '.svg', Report.vector(figure, mm), 'image/svg+xml');
+        else download(base + '.png', await Report.raster(figure, mm), 'image/png');
+        status.textContent = 'Рисунок сохранён.';
+      } catch (e) { error.textContent = fmt(L.exportFailed, { msg: e.message }); }
+      finally { button.disabled = false; }
+    };
+    await dialog({
+      title: 'Рисунок для отчёта',
+      noValidate: true,
+      body: [
+        el('div', { class: 'dlg-pair' }, [field('Номер рисунка', number), field('Ширина при вставке, мм', width)]),
+        field('Наименование рисунка', title),
+        el('label', { class: 'check' }, [visibleOnly, 'Только видимые группы']),
+        el('div', { class: 'pactions' }, [
+          btn('Скачать SVG', e => toFile(e.currentTarget, 'svg'), 'primary'),
+          btn(`Скачать PNG · ${Report.DPI} dpi`, e => toFile(e.currentTarget, 'png'))
+        ]),
+        field('Подпись к рисунку', caption),
+        btn('Копировать подпись', async () => {
+          if (!number.reportValidity() || !title.reportValidity()) return;
+          const copied = await writeClipboard(caption.value);
+          status.textContent = copied ? 'Подпись скопирована.' : 'Подпись выделена. Нажмите Ctrl+C или Cmd+C.';
+          if (!copied) { caption.focus(); caption.select(); }
+        }),
+        el('p', { class: 'hint', text: 'Вставьте рисунок в Word или LibreOffice Writer. Подпись разместите по центру под рисунком. Размер и нумерацию можно подстроить под методичку кафедры.' }),
+        error, status
+      ],
+      buttons: [{ value: '', label: L.close }]
+    });
   }
 
   /* ======================= СПИСОК ДИАГРАММ ======================= */
@@ -1311,7 +1447,7 @@
     if (D && !list.some(x => x.id === D.id)) list.unshift({ id: D.id });
     list.forEach(x => {
       const cur = D && x.id === D.id;
-      const info = cur ? { name: D.name, tables: D.tables.length, updatedAt: D.updatedAt } : x;
+      const info = cur ? { name: D.name, kind: D.kind, tables: D.tables.length, updatedAt: D.updatedAt } : x;
       const open = ev => { ev.preventDefault(); openDiagramMenu(x.id, info.name, ev); };
       ul.appendChild(el('li', { class: 'ditem' + (cur ? ' cur' : '') }, [
         el('button', {
@@ -1320,7 +1456,8 @@
           ondblclick: () => { closePopup(); switchTo(x.id); }
         }, [
           el('span', { class: 'dn', text: info.name }),
-          el('span', { class: 'dm', text: plural(info.tables || 0, L.tablesN) + ' · ' + timeLabel(info.updatedAt) }),
+          el('span', { class: 'dm', text: ERD.MODEL_KINDS[ERD.modelKind(info.kind)].title }),
+          el('span', { class: 'dm', text: countObjects(info.tables || 0, info.kind) + ' · ' + timeLabel(info.updatedAt) }),
           el('span', { class: 'dmore', text: '⋯', 'aria-hidden': 'true' })
         ])
       ]));
@@ -1352,11 +1489,105 @@
     openDiagram(d);
     if (!wide()) setSidebar(false);
   }
-  function newDiagram() {
+  function kindSelect(value) {
+    return el('select', {}, Object.entries(ERD.MODEL_KINDS).map(([kind, { title }]) =>
+      el('option', { value: kind, text: title, selected: value === kind })));
+  }
+  async function newDiagram(withExample = false) {
+    const kind = kindSelect(D.kind), name = el('input', { type: 'text', maxlength: 200 });
+    const dbms = el('input', { type: 'text', value: 'PostgreSQL', maxlength: 80 });
+    const useSample = el('input', { type: 'checkbox', checked: withExample });
+    const dbmsField = field('СУБД', dbms);
+    const hint = el('p', { class: 'hint' });
+    const hintForKind = () => {
+      hint.textContent = ERD.MODEL_KINDS[kind.value].hint;
+      dbmsField.hidden = kind.value !== 'physical' || useSample.checked;
+      name.placeholder = useSample.checked ? 'Учёт успеваемости' : L.newDiagramName;
+    };
+    kind.addEventListener('change', hintForKind);
+    useSample.addEventListener('change', hintForKind);
+    hintForKind();
+    const result = await dialog({
+      title: 'Новая модель БД',
+      body: [field('Уровень модели', kind), hint, field('Название', name),
+        el('label', { class: 'check' }, [useSample, 'Заполнить примером «Учёт успеваемости»']), dbmsField],
+      buttons: [{ value: 'ok', label: 'Создать', primary: true }, { value: '', label: L.cancel }],
+      onOpen: () => kind.focus()
+    });
+    if (result !== 'ok') return;
     flushSave();
     const n = Store.list().length + 1;
-    openDiagram(Model.newDiagram(L.newDiagramName + ' ' + n));
+    const title = name.value.trim();
+    openDiagram(useSample.checked ? Samples.university(kind.value, title) :
+      Model.newDiagram(title || L.newDiagramName + ' ' + n, kind.value, dbms.value.trim()));
     if (mode !== 'edit') setMode('edit');
+  }
+  async function editModelProperties() {
+    const d = D, readOnly = mode !== 'edit';
+    const name = el('input', { type: 'text', value: d.name, maxlength: 200, readonly: readOnly });
+    const dbms = el('input', { type: 'text', value: d.dbms, maxlength: 80, readonly: readOnly });
+    const result = await dialog({
+      title: ERD.MODEL_KINDS[d.kind].title,
+      body: [field('Название', name), d.kind === 'physical' ? field('СУБД', dbms) : null,
+        el('p', { class: 'hint', text: ERD.MODEL_KINDS[d.kind].hint })],
+      buttons: readOnly ? [{ value: '', label: L.close }] :
+        [{ value: 'ok', label: 'Сохранить', primary: true }, { value: '', label: L.cancel }],
+      validate: v => v === 'ok' && (!name.value.trim() || (d.kind === 'physical' && !dbms.value.trim())) ? 'Заполните поля.' : null
+    });
+    if (result !== 'ok' || D !== d) return;
+    D.name = name.value.trim();
+    D.dbms = dbms.value.trim();
+    $('#dname').value = D.name;
+    document.title = D.name + ' · ' + L.appTitle;
+    changed({ render: false });
+    renderSidebar();
+  }
+  async function showRelationships() {
+    if (!D.tables.length) { toast('Сначала добавьте сущность.'); return; }
+    const edges = R.idx.edges;
+    const result = await dialog({
+      title: 'Связи сущностей',
+      body: [el('p', { class: 'hint', text: L.conceptLegend }),
+        edges.length ? el('div', { class: 'relationship-list' }, edges.map((e, i) =>
+          el('button', { type: 'submit', class: 'relationship-row', value: String(i), text: ERD.relationshipLabel(e) }))) : null],
+      buttons: [{ value: 'add', label: '+ Связь', primary: true, focus: true }, { value: '', label: L.close }]
+    });
+    if (result == null) return;
+    const [from, to] = sel;
+    await editRelationship(result === 'add' ? null : edges[Number(result)].relation, from, to);
+  }
+  async function editRelationship(relation, fromId, toId) {
+    if (!D.tables.length) { toast('Сначала добавьте сущность.'); return; }
+    const d = D;
+    const entities = [...d.tables].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    const first = relation?.from || fromId || entities[0].id;
+    const second = relation?.to || toId || entities.find(t => t.id !== first)?.id || first;
+    const entitySelect = current => el('select', {}, entities.map(t =>
+      el('option', { value: t.id, text: t.name, selected: t.id === current })));
+    const cardinalitySelect = current => el('select', {}, ERD.CARDINALITIES.map(value =>
+      el('option', { value, text: value, selected: value === current })));
+    const from = entitySelect(first), to = entitySelect(second);
+    const fromCardinality = cardinalitySelect(relation?.fromCardinality || '1');
+    const toCardinality = cardinalitySelect(relation?.toCardinality || '0..*');
+    const name = el('input', { type: 'text', value: relation?.name || '', maxlength: 160, placeholder: 'Например, «получает»' });
+    const result = await dialog({
+      title: relation ? 'Изменение связи' : 'Новая связь',
+      body: [field('Название связи', name), el('p', { class: 'hint', text: L.conceptLegend }),
+        el('div', { class: 'dlg-pair' }, [field('Первая сущность', from), field('Кратность у первой сущности', fromCardinality)]),
+        el('div', { class: 'dlg-pair' }, [field('Вторая сущность', to), field('Кратность у второй сущности', toCardinality)]),
+        el('p', { class: 'hint', text: L.conceptRanges })],
+      buttons: [{ value: 'ok', label: 'Сохранить', primary: true },
+        ...(relation ? [{ value: 'delete', label: 'Удалить связь', danger: true }] : []), { value: '', label: L.cancel }],
+      onOpen: () => name.focus(),
+      validate: v => v === 'ok' && !name.value.trim() ? 'Введите название связи.' : null
+    });
+    if (!result || D !== d) return;
+    if (result === 'delete') d.relationships = d.relationships.filter(r => r !== relation);
+    else {
+      const values = { from: from.value, to: to.value, name: name.value.trim(), fromCardinality: fromCardinality.value, toCardinality: toCardinality.value };
+      if (relation) Object.assign(relation, values); else d.relationships.push(values);
+    }
+    changed();
   }
   async function renameDiagram(id) {
     const cur = id === D.id, d = cur ? D : Store.load(id); if (!d) return;
@@ -1481,14 +1712,16 @@
   /* ======================= МЕНЮ «ФАЙЛ» ======================= */
   const menu = $('#file-menu'), fileBtn = $('#b-file');
   const ACTIONS = {
-    import: pickFile, exportJson, exportHtml, exportSvg, exportPng, exportAll,
+    import: pickFile, exportJson, exportHtml, exportSvg, exportPng, exportAll, exportReport, prompts: () => openPrompts(),
     copy: () => copySelection(false), paste: () => pasteFromButton(), pasteJson: openPasteJson,
-    lint: openLint, newDiagram, sample: loadSample, minimap: () => setMinimap(!prefs.minimap)
+    lint: openLint, newDiagram: () => newDiagram(), sample: () => newDiagram(true), networkSample: loadSample,
+    minimap: () => setMinimap(!prefs.minimap)
   };
   function renderMenu() {
-    const items = [['import', L.mImport], ['exportJson', L.mExportJson, 'Ctrl+S'], ['exportHtml', L.mExportHtml], ['exportSvg', L.mExportSvg],
+    const items = [['import', L.mImport], ['exportReport', 'Рисунок для отчёта…'], ['exportJson', L.mExportJson, 'Ctrl+S'], ['exportHtml', L.mExportHtml], ['exportSvg', L.mExportSvg],
       ['exportPng', L.mExportPng], ['exportAll', L.mExportAll], '-', ['copy', L.mCopy, 'Ctrl+C'], ['paste', L.mPaste, 'Ctrl+V'],
-      ['pasteJson', L.mPasteJson], '-', ['lint', L.mLint], ['newDiagram', L.mNewDiagram], ['sample', L.mSample], '-', ['minimap', L.minimap]];
+      ['pasteJson', L.mPasteJson], '-', ['lint', L.mLint], ['newDiagram', L.mNewDiagram], ['sample', 'Учебный пример…'],
+      ['networkSample', L.mSample], ['prompts', 'Промпты для моделей…'], '-', ['minimap', L.minimap]];
     menu.textContent = '';
     items.forEach(it => {
       if (it === '-') { menu.appendChild(el('hr', { role: 'separator' })); return; }
@@ -1557,15 +1790,42 @@
     o.notes.forEach(n => { delete n.x; delete n.y; delete n.id; });
     return JSON.stringify(o, null, 2);
   }
-  function copyText(text) { writeClipboard(text); toast(L.aiCopied); }
-  const promptWithSchema = () => { flushSave(); return L.promptFromJson.replace(L.promptJsonPlaceholder, schemaForAi(D)); };
-  async function showPrompt(title, text) {
-    const ta = el('textarea', { readonly: true, value: text, 'aria-label': title, spellcheck: 'false' });
-    const v = await dialog({
-      title, body: ta, onOpen: () => { ta.scrollTop = 0; },
-      buttons: [{ value: 'copy', label: L.aiCopy, primary: true }, { value: '', label: L.close }]
+  async function openPrompts(initialKind = D.kind) {
+    const kind = kindSelect(initialKind);
+    const action = el('select', {}, [
+      el('option', { value: 'generate', text: 'Построить модель или перейти к другому уровню' }),
+      el('option', { value: 'describe', text: 'Описать рисунок в отчёте' }),
+      el('option', { value: 'code', text: 'Сгенерировать SQL или модели SQLAlchemy' })
+    ]);
+    const withModel = el('input', { type: 'checkbox' });
+    const ta = el('textarea', { readonly: true, spellcheck: 'false', rows: 17, 'aria-label': 'Текст промпта' });
+    const status = el('p', { class: 'hint', role: 'status' });
+    const hint = el('p', { class: 'hint' });
+    const refresh = () => {
+      kind.disabled = action.value !== 'generate';
+      const source = withModel.checked ? schemaForAi(D) : '';
+      ta.value = Prompts.build(action.value, kind.disabled ? D.kind : kind.value, source);
+      ta.scrollTop = 0;
+      status.textContent = '';
+      hint.textContent = action.value === 'generate' ? 'Дополните промпт заданием и импортируйте JSON из ответа.' :
+        'Приложите модель и укажите требования кафедры или целевую СУБД.';
+    };
+    [kind, action, withModel].forEach(control => control.addEventListener('change', refresh));
+    refresh();
+    const result = await dialog({
+      title: 'Промпты для моделей БД',
+      body: [
+        field('Задача', action), field('Уровень модели', kind),
+        el('label', { class: 'check' }, [withModel, 'Включить JSON открытой модели']),
+        hint, ta, status,
+        btn(L.aiCopy, async () => {
+          if (await writeClipboard(ta.value)) status.textContent = L.aiCopied;
+          else { ta.focus(); ta.select(); status.textContent = 'Текст выделен. Нажмите Ctrl+C или Cmd+C.'; }
+        }, 'primary')
+      ],
+      buttons: [{ value: 'import', label: L.aiImport }, { value: '', label: L.close }]
     });
-    if (v === 'copy') copyText(text);
+    if (result === 'import') await importAiAnswer();
   }
   async function importAiAnswer() {
     const ta = el('textarea', { spellcheck: 'false', 'aria-label': L.aiImportTitle });
@@ -1583,19 +1843,10 @@
       el('dl', { class: 'hdl keys' }, L.keys.map(([a, b]) => [el('dt', {}, a.split(/(, | \/ )/).map(k => (/^(, | \/ )$/.test(k) ? k : el('kbd', { text: k })))), el('dd', { text: b })])),
       el('p', { class: 'hint', text: L.keysNote })
     ]);
-    const card = (title, text, buttons) => el('div', { class: 'aicard' }, [el('h4', { text: title }), el('p', { class: 'hint', text }), el('div', { class: 'aibtns' }, buttons)]);
     append($('#help-ai'), [
-      el('p', { class: 'hint', text: L.aiIntro }),
-      card(L.aiToJsonTitle, L.aiToJsonText, [
-        btn(L.aiCopy, () => copyText(L.promptToJson), 'primary'),
-        btn(L.aiShow, () => showPrompt(L.aiToJsonTitle, L.promptToJson)),
-        btn(L.aiImport, importAiAnswer)
-      ]),
-      card(L.aiFromJsonTitle, L.aiFromJsonText, [
-        btn(L.aiCopyWithJson, () => copyText(promptWithSchema()), 'primary'),
-        btn(L.aiCopy, () => copyText(L.promptFromJson)),
-        btn(L.aiShow, () => showPrompt(L.aiFromJsonTitle, promptWithSchema()))
-      ])
+      el('p', { class: 'hint', text: 'Шаблоны для построения моделей и пояснительного текста к рисункам.' }),
+      el('div', { class: 'aibtns' }, Object.entries(ERD.MODEL_KINDS).map(([kind, { title }]) =>
+        btn(title, () => openPrompts(kind))).concat(btn(L.aiImport, importAiAnswer)))
     ]);
     /* какие разделы раскрыты — запоминается */
     const open = prefs.help || {};
@@ -1657,6 +1908,8 @@
   $('#m-view').addEventListener('click', () => setMode('view'));
   $('#m-edit').addEventListener('click', () => setMode('edit'));
   $('#b-add-table').addEventListener('click', () => addTable());
+  $('#b-relationships').addEventListener('click', showRelationships);
+  $('#model-level').addEventListener('click', editModelProperties);
   $('#b-groups').addEventListener('click', () => { groupsPanel = !(groupsPanel && !sel.size); sel.clear(); R.refresh(); renderPanel(); });
   $('#b-undo').addEventListener('click', undo);
   $('#b-redo').addEventListener('click', redo);
@@ -1664,10 +1917,10 @@
   $('#b-layout').addEventListener('click', doAutoLayout);
   $('#b-snap').addEventListener('click', () => { prefs.snap = !prefs.snap; savePrefs(); $('#b-snap').setAttribute('aria-pressed', String(prefs.snap)); });
   $('#theme').addEventListener('click', () => { ERD.setTheme(ERD.currentTheme() === 'dark' ? 'light' : 'dark', true); scheduleMinimap(); });
-  $('#sb-new').addEventListener('click', newDiagram);
+  $('#sb-new').addEventListener('click', () => newDiagram());
   $('#sb-import').addEventListener('click', pickFile);
   $('#sb-export-all').addEventListener('click', exportAll);
-  $('#sb-sample').addEventListener('click', loadSample);
+  $('#sb-sample').addEventListener('click', () => newDiagram(true));
   const dname = $('#dname');
   dname.addEventListener('input', () => {
     D.name = dname.value; document.title = (D.name || '…') + ' — ' + L.appTitle;
@@ -1696,7 +1949,7 @@
       const last = Store.getLast();
       d = (last && Store.load(last)) || list.map(x => Store.load(x.id)).find(Boolean) || null;
     }
-    if (!d) d = Samples.demo();
+    if (!d) d = Samples.university('logical');
     openDiagram(d);
     if (!Store.persistent) toast(L.storageUnavailable, { type: 'warn', timeout: 9000 });
     setInterval(renderSidebar, 60000);

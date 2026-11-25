@@ -35,6 +35,10 @@ button.toggle[aria-pressed=true]{border-color:var(--accent);color:var(--accent);
 body.mode-view .edit-only{display:none!important}
 #top .row2{flex-basis:100%;display:flex;gap:10px;align-items:center;min-height:26px}
 #top .row2 #chips{flex:1}
+#model-level{color:var(--text);font-size:12px;line-height:1.2;text-align:left;max-width:min(40vw,260px);
+  padding:4px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:none}
+#b-relationships[hidden],.field[hidden]{display:none}
+#svg.exporting *{transition:none!important;animation:none!important}
 
 /* меню «Файл» */
 .menu-wrap{position:relative}
@@ -89,10 +93,7 @@ body.sb-open #sidebar{transform:none;visibility:visible}
 .hdl dd{margin:0 0 7px}
 .help kbd{display:inline-block;font:600 10.5px ui-monospace,Menlo,Consolas,monospace;color:var(--text);background:var(--bg);
   border:1px solid var(--card-line);border-bottom-width:2px;border-radius:5px;padding:0 5px;line-height:17px}
-.aicard{border:1px solid var(--card-line);border-radius:10px;padding:9px 10px;margin-top:10px;background:var(--bg)}
-.aicard h4{margin:0;font-size:12.5px;color:var(--text)}
-.aicard .hint{margin:3px 0 8px}
-.aibtns{display:flex;flex-wrap:wrap;gap:5px}
+.aibtns{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
 .aibtns button{font-size:11.5px;padding:4px 8px;background:var(--panel)}
 .aibtns button.primary{background:var(--accent)}
 .menu.popup{position:fixed;top:0;left:0;z-index:25;min-width:220px}
@@ -133,6 +134,8 @@ body.mode-edit #panel{width:var(--pw)}
 #panel select{padding:4px 5px}
 .field{display:flex;flex-direction:column;gap:4px;margin:10px 0}
 .field>span,.lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+.relationship-list{display:grid;gap:5px;max-height:22vh;overflow:auto}
+.relationship-row{display:block;width:100%;text-align:left;margin:4px 0;overflow-wrap:anywhere}
 .check{display:flex;align-items:center;gap:8px;font-size:13px;margin:8px 0;cursor:pointer}
 .check input{width:16px;height:16px;accent-color:var(--accent)}
 .pactions{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px}
@@ -192,9 +195,11 @@ dialog.dlg{border:1px solid var(--card-line);border-radius:12px;background:var(-
 dialog.dlg::backdrop{background:rgba(10,14,20,.45)}
 .dlg h2{margin:0 0 10px;font-size:16px}
 .dlg p{font-size:13.5px;line-height:1.5;margin:6px 0}
-.dlg input[type=text],.dlg textarea{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--card-line);border-radius:8px;
+.dlg input[type=text],.dlg input[type=number],.dlg select,.dlg textarea{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--card-line);border-radius:8px;
   padding:7px 9px;font-size:13.5px;font-family:inherit}
+.dlg-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:12px}
 .dlg textarea{min-height:220px;font:12px ui-monospace,Menlo,Consolas,monospace;resize:vertical}
+.dlg textarea.caption-text{min-height:0;font:inherit;line-height:1.35}
 .dlg .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap}
 .dlg .err{color:var(--danger);font-size:12.5px;margin-top:6px;white-space:pre-wrap}
 .dlg .err:empty{display:none}
